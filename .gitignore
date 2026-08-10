@@ -1,0 +1,17 @@
+# environment
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# data, model weights and rendered output — all reproducible from the notebook
+data/
+models/*.pt
+*.mp4
+
+# local tooling / editor
+.claude/
+CLAUDE.md
+.vscode/
+.idea/
+.DS_Store

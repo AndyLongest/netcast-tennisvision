@@ -1,0 +1,9 @@
+ultralytics
+opencv-python-headless
+jupyter
+ipykernel
+huggingface_hub
+matplotlib
+numpy
+scipy
+yt-dlp
