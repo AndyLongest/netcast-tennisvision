@@ -3,11 +3,24 @@
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+.pytest_cache/
+.ruff_cache/
 
-# data, model weights and rendered output — all reproducible from the notebook
+# runtime data, model weights and rendered output
 data/
-models/*.pt
+models/
+outputs/
 *.mp4
+
+# The two small, frozen product-demo videos are deliberately versioned. All uploaded,
+# generated and experimental MP4 files remain ignored everywhere else.
+!assets/demo/demo.mp4
+!assets/demo/annotated_clip.mp4
+
+# Papers are kept locally for research but the public repository ships citations and
+# source links, not third-party PDF copies.
+docs/references/*.pdf
+docs/history/*.log
 
 # local tooling / editor
 .claude/

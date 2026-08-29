@@ -1,0 +1,39 @@
+{
+  "version": "racketvision-production-v1",
+  "frozen_at": "2026-08-26",
+  "input_policy": "any positive native fps; 29.97/30fps regression floor; no frame dropping or interpolation",
+  "training_during_upload": false,
+  "weights": {
+    "racketvision": {
+      "path": "models/racketvision_balltrack_state_v1.pt",
+      "sha256": "64c871b5079d7f3440b377ef5bb66c9ed070ed91060e075c8672c5b7ab4c691f"
+    },
+    "bounce_classifier": {
+      "path": "models/bounce_classifier_production_v1.pkl",
+      "sha256": "b53b1d3330af2b457e3b329c94ded9994d3098c6c7b3850fa80c727539ec7cfb"
+    }
+  },
+  "demo": {
+    "source": "assets/demo/demo.mp4",
+    "fps": 29.913892078071182,
+    "frames": 1737,
+    "positioned_frames": 1220,
+    "bounces": 28,
+    "hits": 32,
+    "outputs": {
+      "video": {
+        "path": "assets/demo/annotated_clip.mp4",
+        "sha256": "623492af6252818afa98e5942d51d008799f4bf56fc13b2ec3ef6f6add9cd709"
+      },
+      "scene": {
+        "path": "assets/demo/scene3d.json",
+        "sha256": "6f9f16615da1ed060db0db3596157947d9e8b0ac14953fd0d5d0a0d3437ed61b"
+      },
+      "viewer": {
+        "path": "assets/demo/rally3d.html",
+        "sha256": "1a3f3f45eb7620793e4e0e1cfb3b762626b2ec03536cfbb2418b1d1f8a85ac23"
+      }
+    }
+  },
+  "manual_review": "tests/fixtures/manual_landing_annotations_v1.json"
+}

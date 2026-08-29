@@ -1,0 +1,75 @@
+{
+  "schema_version": 2,
+  "publication_status": "blocked_pending_license_review",
+  "assets": [
+    {
+      "id": "racketvision-balltrack-state-v1",
+      "group": "runtime",
+      "path": "models/racketvision_balltrack_state_v1.pt",
+      "size": 45403906,
+      "sha256": "64c871b5079d7f3440b377ef5bb66c9ed070ed91060e075c8672c5b7ab4c691f",
+      "required": true,
+      "source": "Derived without tensor changes from OrcustD/RacketVision balltrack_best.pth",
+      "source_url": "https://huggingface.co/linfeng302/RacketVision-Models/blob/a3760773233a0988c9605259743fbdd87c59d3a3/checkpoints/balltrack_best.pth",
+      "license": "MIT",
+      "delivery": "download_and_extract_state_dict",
+      "download_url": "https://huggingface.co/linfeng302/RacketVision-Models/resolve/a3760773233a0988c9605259743fbdd87c59d3a3/checkpoints/balltrack_best.pth",
+      "download_size": 46585585,
+      "download_sha256": "00d707b9db7a49561c411e4765956e79bcd7c7e20c7a0a535073440b3e972342"
+    },
+    {
+      "id": "bounce-classifier-production-v1",
+      "group": "runtime",
+      "path": "models/bounce_classifier_production_v1.pkl",
+      "size": 25296068,
+      "sha256": "b53b1d3330af2b457e3b329c94ded9994d3098c6c7b3850fa80c727539ec7cfb",
+      "required": true,
+      "source": "Frozen temporal classifier described in docs/RACKETVISION_PRODUCTION.md",
+      "source_url": "https://github.com/ArtLabss/tennis-tracking/blob/3a633be55f13667649c385ff76055176bf074c6b/bigDF.csv",
+      "license": "upstream dataset terms require publication review",
+      "delivery": "rebuild_from_pinned_reference",
+      "download_url": "https://raw.githubusercontent.com/ArtLabss/tennis-tracking/3a633be55f13667649c385ff76055176bf074c6b/bigDF.csv",
+      "download_size": 149090,
+      "download_sha256": "722182de1279cd51accf3444388150e13e26908ec9718993f1d61417236e267a"
+    },
+    {
+      "id": "ultralytics-yolo11n-seg",
+      "group": "runtime",
+      "path": "models/yolo11n-seg.pt",
+      "size": 6182636,
+      "sha256": "55ed65c56c91713d23e8402371c6c49a6fd84f257f7dce452e8d70e41dcbe152",
+      "required": true,
+      "source": "Ultralytics YOLO11 segmentation checkpoint",
+      "source_url": "https://github.com/ultralytics/assets",
+      "license": "AGPL-3.0 or Ultralytics Enterprise License",
+      "delivery": "download",
+      "download_url": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n-seg.pt"
+    },
+    {
+      "id": "validated-demo-source",
+      "group": "demo",
+      "path": "assets/demo/demo.mp4",
+      "size": 2229490,
+      "sha256": "18a0ea9c5180413dae5161e1b8f792c03c57b7d8413fbcafd7321f4fce094072",
+      "required": true,
+      "source": "Validated 1280x720, 29.9139fps product sample",
+      "source_url": null,
+      "license": "project-owned bundled product sample",
+      "delivery": "git",
+      "download_url": null
+    },
+    {
+      "id": "validated-demo-annotated",
+      "group": "demo",
+      "path": "assets/demo/annotated_clip.mp4",
+      "size": 5358237,
+      "sha256": "623492af6252818afa98e5942d51d008799f4bf56fc13b2ec3ef6f6add9cd709",
+      "required": true,
+      "source": "Generated from validated-demo-source by production baseline",
+      "source_url": null,
+      "license": "derived from the bundled project sample",
+      "delivery": "git",
+      "download_url": null
+    }
+  ]
+}

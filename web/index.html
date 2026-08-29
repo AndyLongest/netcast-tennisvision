@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#171020" />
+  <meta name="description" content="Netcast TennisVision：上传任意原生帧率的固定机位网球视频，自动生成轨迹、落点与三维复盘。" />
+  <title>Netcast TennisVision · 看见每一拍，读懂整场比赛</title>
+  <link rel="stylesheet" href="styles.css?v=20260829b" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand home-trigger" href="#welcomeView" aria-label="返回 Netcast TennisVision 首页">
+      <span class="brand-mark netcast-mark" aria-hidden="true"><img src="assets/netcast-mark.png" alt="" /></span>
+      <span class="brand-copy"><strong>Netcast TennisVision</strong><small>COURT INTELLIGENCE</small></span>
+    </a>
+    <nav class="main-nav" aria-label="主导航">
+      <button class="nav-item active home-trigger">智能分析</button>
+      <button class="nav-item" data-toast="完成一次分析后，报告会保存在本机">分析记录</button>
+    </nav>
+    <div class="top-actions">
+      <span class="engine-status" title="专业比赛分析引擎已准备就绪"><i></i><span>分析引擎</span><strong>已就绪</strong></span>
+      <button class="help-button" id="helpBtn">使用帮助</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="welcomeView" class="welcome-view">
+      <div class="hero-glow glow-one"></div><div class="hero-glow glow-two"></div>
+      <div class="hero-court" aria-hidden="true"><i></i><i></i><i></i><i></i><span></span></div>
+      <div class="hero-copy">
+        <span class="eyebrow"><i></i> 任意原生帧率 · 专业单机位分析</span>
+        <h1>一段视频，<br /><em>看懂整场比赛。</em></h1>
+        <p class="hero-lead">无需穿戴设备，无需人工标记。上传固定底线机位视频，自动获得球轨迹、每次落点、关键事件与三维比赛复盘。</p>
+        <div class="hero-actions">
+          <button class="hero-demo" id="heroDemoBtn"><span class="play-icon">▶</span> 立即观看真实样例</button>
+          <span class="hero-note"><i>✓</i> 数据只在本机处理</span>
+        </div>
+      </div>
+
+      <div class="upload-card" id="uploadCard">
+        <div class="upload-head">
+          <div><span class="step-kicker">开始一次新分析</span><h2>上传比赛视频</h2></div>
+          <span class="time-chip" title="上传后自动完成比赛分析"><i>⚡</i> 智能分析</span>
+        </div>
+        <div class="steps" aria-label="操作步骤">
+          <span class="current"><b>1</b><em>选择视频</em></span><i></i>
+          <span><b>2</b><em>自动分析</em></span><i></i>
+          <span><b>3</b><em>查看报告</em></span>
+        </div>
+        <div class="drop-zone" id="dropZone">
+          <input id="videoInput" type="file" aria-label="选择比赛视频" accept="video/mp4,video/quicktime,video/webm,video/x-matroska" />
+          <div class="upload-orbit" aria-hidden="true"><span>＋</span><i></i></div>
+          <h3>把视频拖到这里</h3>
+          <p>或者点击下方按钮，从电脑中选择</p>
+          <button class="primary-button" id="chooseBtn"><span>选择比赛视频</span><b>→</b></button>
+          <div class="format-row"><span>常见视频格式</span><i></i><span>不限原生帧率</span><i></i><span>最大四吉字节</span></div>
+        </div>
+        <div class="camera-guide">
+          <span class="guide-icon" aria-hidden="true">⌗</span>
+          <div><strong>怎样的视频效果最好？</strong><p>固定高位底线机位 · 横屏 · 一千零八十线或更清晰</p></div>
+          <button id="guideBtn" data-toast="相机放在底线后方中央，完整拍到整片球场即可">查看示意</button>
+        </div>
+        <button class="sample-button" id="demoBtn"><span><i>▶</i><b>没有视频？</b> 用真实比赛样例体验</span><strong>直接查看报告 →</strong></button>
+      </div>
+    </section>
+
+    <section id="processingView" class="processing-view" hidden>
+      <div class="processing-shell">
+        <div class="processing-visual">
+          <span class="analysis-chip"><i></i> Netcast TennisVision · 智能分析</span>
+          <div class="scan-court"><i class="scan-line"></i><canvas class="ambient-ball" id="ambientBall" aria-hidden="true"></canvas><b class="player p1"></b><b class="player p2"></b></div>
+          <div class="processing-proof"><strong>你可以离开这个页面</strong><span>分析会在本机继续运行</span></div>
+        </div>
+        <div class="processing-copy">
+          <span class="eyebrow dark"><i></i> 专业分析正在进行</span>
+          <h1>正在读懂这场比赛</h1>
+          <p id="processingMessage">正在读取视频画面与声音…</p>
+          <div class="progress-heading"><strong id="progressValue">0%</strong><span id="timeHint">正在准备分析</span></div>
+          <div class="progress-track"><span id="progressBar"></span></div>
+          <ul class="stage-list" id="stageList">
+            <li class="active"><b>1</b><span>读取比赛视频<small>检查帧率、画质与声音</small></span><i></i></li>
+            <li><b>2</b><span>建立球场坐标<small>识别边线与两名球员</small></span><i></i></li>
+            <li><b>3</b><span>追踪球与落点<small>融合运动、球员与声音</small></span><i></i></li>
+            <li><b>4</b><span>生成复盘报告<small>视频、数据与三维场景</small></span><i></i></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="resultsView" class="results-view" hidden>
+      <div class="report-heading">
+        <div class="report-title-block">
+          <button class="back-button" id="newAnalysisBtn">← 分析另一个视频</button>
+          <div class="title-row"><h1 id="reportTitle">示例比赛 · 智能复盘</h1><span class="complete-badge" id="completeBadge"><i></i> 分析完成</span></div>
+          <p><span id="reportMeta">58.1 秒 · 1280 × 720 · 每秒 29.9 帧</span><span class="dot-sep">•</span>刚刚生成</p>
+        </div>
+        <div class="report-actions">
+          <button class="secondary-button" id="exportBtn"><span>↓</span> 导出分析数据</button>
+          <button class="primary-button compact" id="shareBtn"><span>↗</span> 保存复盘报告</button>
+        </div>
+      </div>
+
+      <div class="preview-notice" id="previewNotice" hidden><span>i</span><p><strong>视频尚未完成算法分析</strong>当前仅展示界面结构；运行真实分析后会自动替换为你的比赛数据。</p></div>
+
+      <div class="result-hero">
+        <div class="result-verdict"><span class="result-kicker">本场分析结论</span><h2>完整还原，<em>可以开始复盘。</em></h2><p id="verdictText">系统已建立稳定球场坐标，并还原本场关键落点与击球事件。</p></div>
+        <div class="result-facts">
+          <div><span>分析质量</span><strong id="qualityGrade">优</strong><small>适合战术复盘</small></div>
+          <div><span>界内落点</span><strong id="inRate">97%</strong><small id="inRateDetail">29 / 30 次</small></div>
+          <div><span>最常落区</span><strong class="text-metric" id="dominantZone">近端后场</strong><small id="dominantZoneDetail">10 次落点</small></div>
+        </div>
+      </div>
+
+      <div class="metric-grid">
+        <article class="metric-card"><span class="metric-icon mint">⌁</span><div><small>落地次数</small><strong id="bounceCount">30</strong><p id="validBounceText">29 次界内落地</p></div><i class="trend">逐球确认</i></article>
+        <article class="metric-card"><span class="metric-icon orange">✦</span><div><small>击球次数</small><strong id="hitCount">37</strong><p>球员、运动与声音融合</p></div><i class="trend">关键事件</i></article>
+        <article class="metric-card"><span class="metric-icon blue">◎</span><div><small>球轨迹覆盖率</small><strong id="trackRate">73%</strong><p id="trackDetail">1,264 / 1,737 帧</p></div><i class="trend">真实结果</i></article>
+        <article class="metric-card"><span class="metric-icon purple">⌖</span><div><small>球场拟合误差</small><strong id="courtError">0.69<sup>像素</sup></strong><p>逐帧九线拟合中位数</p></div><i class="trend">亚像素级</i></article>
+      </div>
+
+      <div class="dashboard-grid">
+        <article class="panel video-panel">
+          <div class="panel-heading">
+            <div><span class="panel-kicker">比赛回放</span><h2>智能比赛回放</h2><p>轨迹、球员、球场和落地区域已经叠加</p></div>
+            <label class="switch"><input id="overlayToggle" type="checkbox" checked /><span></span><em>显示分析标记</em></label>
+          </div>
+          <div class="video-shell"><video id="analysisVideo" playsinline controls preload="metadata"></video><span class="ai-label"><i></i> 智能分析</span><div class="video-legend"><span><i class="legend-player"></i> 球员</span><span><i class="legend-ball"></i> 球与轨迹</span><span><i class="legend-court"></i> 落地区域</span></div></div>
+          <div class="event-timeline"><div class="timeline-label"><span>整场关键事件</span><span><i class="bounce-key"></i> 落地 <i class="hit-key"></i> 击球</span></div><div class="timeline-track" id="eventTimeline"><i class="playhead" id="playhead"></i></div><div class="timeline-times"><span>00:00</span><span>00:15</span><span>00:30</span><span>00:45</span><span>01:00</span></div></div>
+        </article>
+
+        <article class="panel events-panel">
+          <div class="panel-heading"><div><span class="panel-kicker">事件记录</span><h2>关键事件</h2><p>点击事件，立即跳到对应画面</p></div><span class="count-pill" id="eventCount">67 个</span></div>
+          <div class="event-filter" role="tablist"><button class="active" data-filter="all">全部</button><button data-filter="bounce">只看落地</button><button data-filter="hit">只看击球</button></div>
+          <div class="event-list" id="eventList"></div>
+        </article>
+
+        <article class="panel heatmap-panel">
+          <div class="panel-heading"><div><span class="panel-kicker">落点地图</span><h2>落点分布</h2><p>界内落点为荧光绿，出界为红叉</p></div><span class="live-pill"><i></i> 真实坐标</span></div>
+          <div class="heatmap-wrap"><canvas id="heatmapCanvas"></canvas><div class="court-label far">远端</div><div class="court-label near">近端</div></div>
+          <div class="heatmap-summary"><div><span>最常落点</span><strong id="heatDominant">近端后场</strong></div><div><span>界内率</span><strong id="heatInRate">97%</strong></div><div><span>平均纵深</span><strong id="averageDepth">9.4 米</strong></div></div>
+        </article>
+
+        <article class="panel scene-panel">
+          <div class="panel-heading"><div><span class="panel-kicker">三维球场</span><h2>三维轨迹还原</h2><p>拖动旋转 · 滚轮缩放 · 点击落点跳转</p></div><span class="interactive-pill">可交互</span></div>
+          <div class="scene-wrap real-scene"><iframe id="sceneFrame" src="../data/outputs/rally3d.html" title="交互式三维网球场"></iframe></div>
+        </article>
+
+        <article class="panel chart-panel">
+          <div class="panel-heading"><div><span class="panel-kicker">飞行轨迹</span><h2>飞行高度</h2><p>由接触点与重力模型还原</p></div><div class="chart-legend"><span><i></i>可信</span><span><i></i>推测</span></div></div>
+          <canvas id="heightCanvas"></canvas>
+          <div class="insight"><span>✦</span><p><strong>系统解读</strong><em id="insightText">已追踪球帧中，大部分获得可信或可外推的三维高度；不可靠位置会主动标记为未知。</em></p></div>
+        </article>
+
+        <article class="panel quality-panel">
+          <div class="panel-heading"><div><span class="panel-kicker">质量检查</span><h2>结果可信度</h2><p>不懂算法，也能判断这份报告</p></div><span class="score-ring" id="scoreRing">优</span></div>
+          <div class="quality-score"><strong id="qualityTitle">结果可靠</strong><span>适合用于日常复盘与战术讨论</span></div>
+          <div class="quality-bars">
+            <div><span>球场识别 <em>优秀</em></span><i><b style="width:99%"></b></i></div>
+            <div><span>球员追踪 <em>优秀</em></span><i><b style="width:98%"></b></i></div>
+            <div><span>球轨迹完整度 <em id="trackQualityLabel">良好</em></span><i><b id="trackQualityBar" style="width:73%"></b></i></div>
+            <div><span>落点事件一致性 <em>良好</em></span><i><b style="width:88%"></b></i></div>
+          </div>
+          <div class="plain-note"><span>i</span><p><strong>你需要知道</strong>远端发球区会受到球网遮挡。系统会融合整段轨迹与击球顺序判断，不会用单帧画面草率下结论。</p></div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="brand-footer">
+    <div class="footer-main">
+      <div class="footer-signature">
+        <img src="assets/netcast-mark.png" alt="Netcast TennisVision" />
+        <div><strong>Netcast TennisVision</strong><p>看见每一拍，读懂整场比赛。</p></div>
+      </div>
+      <div class="footer-links">
+        <div><span>产品</span><a class="home-trigger" href="#welcomeView">智能比赛分析</a><a href="#resultsView">三维复盘报告</a><button data-toast="比赛数据始终在本机处理">本机隐私处理</button></div>
+        <div><span>社交媒体</span><button data-toast="抖音搜索：谦宇数据 · 抖音号 64226687531">抖音 · 谦宇数据</button><small>抖音号 64226687531</small><small>账号属地 · 广东</small></div>
+        <div><span>研发团队</span><strong>深圳市谦宇数据有限公司</strong><small>专注于智能技术垂直落地</small><small>Netcast TennisVision</small></div>
+      </div>
+    </div>
+    <div class="footer-bottom"><span>© 2026 Netcast TennisVision</span><span>为下一分而设计</span></div>
+  </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <dialog id="courtCalibrationDialog" class="calibration-dialog">
+    <span class="dialog-icon">⌗</span><h2>帮系统确认一下球场</h2>
+    <p class="calibration-intro" id="calibrationReason">自动识别没有达到可靠标准。只需依次点选四个底线角点，分析就会继续。</p>
+    <div class="calibration-step"><strong id="calibrationStep">第 1 步：点击近端左角</strong><button id="calibrationReset" type="button">重新标记</button></div>
+    <div class="calibration-canvas-wrap"><canvas id="courtCalibrationCanvas"></canvas></div>
+    <p class="calibration-hint">顺序：近端左角 → 近端右角 → 远端右角 → 远端左角</p>
+    <button class="primary-button" id="calibrationSubmit" type="button" disabled>确认球场，继续分析</button>
+  </dialog>
+  <dialog id="helpDialog">
+    <button class="dialog-close" aria-label="关闭">×</button><span class="dialog-icon">?</span><h2>三步完成比赛复盘</h2>
+    <ol><li><b>上传视频</b><span>选择固定高位底线机位的任意原生帧率视频。</span></li><li><b>等待自动分析</b><span>帧率越高，逐帧计算量通常越大。</span></li><li><b>查看报告</b><span>点击落点或击球事件即可跳转回放。</span></li></ol>
+    <button class="primary-button dialog-ok">明白了，开始分析</button>
+  </dialog>
+  <script src="demo-scene.js?v=20260829a"></script>
+  <script src="app.js?v=20260829d"></script>
+</body>
+</html>

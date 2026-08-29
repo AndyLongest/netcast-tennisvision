@@ -1,0 +1,28 @@
+name: Bug report
+description: Report a reproducible Netcast TennisVision failure without uploading private match video.
+title: "[Bug]: "
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python, GPU, native FPS and resolution. Do not paste private paths or credentials.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Reproduction evidence
+      description: Timestamp window, sanitized log excerpt and regression counters. Confirm permission before sharing video.

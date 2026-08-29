@@ -1,0 +1,22 @@
+{
+  "annotation_set": "manual_landing_annotations_v1.json",
+  "verified_on": "2026-08-24",
+  "video_fps": 29.91,
+  "tracking_module_changed": false,
+  "results": [
+    {"id": "around_06_far_premature", "false_flash_removed_s": 6.49, "kept_touchdown_s": 7.16},
+    {"id": "around_19_wrong_near_service_box", "false_flash_removed_s": 19.46, "recovered_touchdown_s": 20.19, "zone": "Far-Right Service Box"},
+    {"id": "around_25_26_missed_far", "recovered_touchdown_s": 25.44, "zone": "Far Backcourt"},
+    {"id": "around_30_missed_far", "recovered_touchdown_s": 31.43, "zone": "Far Backcourt"},
+    {"id": "around_40_opponent_serve_missed_near", "recovered_touchdown_s": 40.28, "zone": "Near-Right Service Box", "source": "short occlusion bridged by frozen track"},
+    {"id": "around_42_lob_missed_far", "recovered_touchdown_s": 41.97, "zone": "Far Backcourt"},
+    {"id": "around_43_wide_angle_missed_near_left", "recovered_touchdown_s": 43.16, "zone": "Near Backcourt", "world_m": [1.58, 0.55]},
+    {"id": "around_50_far_premature", "false_flash_removed_s": 50.56, "kept_touchdown_s": 51.19, "zone": "Far Backcourt"},
+    {"id": "around_54_slice_missed_far", "recovered_touchdown_s": 54.17, "zone": "Far Backcourt"},
+    {"id": "out_minimap_marker", "verified_touchdown_s": 56.73, "rendering": "red X at corresponding minimap position"}
+  ],
+  "protected_regressions": [
+    {"name": "check4 serve", "time_s": 12.569, "world_m": [4.8462, 5.7816], "zone": "Near-Left Service Box"},
+    {"name": "check4 terminal winner", "time_s": 15.611, "world_m": [1.6484, 2.0729], "zone": "Near Backcourt"}
+  ]
+}

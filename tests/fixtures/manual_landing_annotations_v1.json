@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "video": "data/clip.mp4",
+  "video_fps_policy": 30,
+  "coordinate_policy": "Times are approximate human review anchors, not frame-exact labels. Never replace them with model output.",
+  "source": "client visual review, 2026-08-24",
+  "module_scope": "landing detection only; frozen ball tracking and main-view trail must not change",
+  "development_order": [
+    "near-court landing detection",
+    "far-court landing detection"
+  ],
+  "annotations": [
+    {
+      "id": "out_minimap_marker",
+      "window_s": null,
+      "side": "out",
+      "label": "visual_requirement",
+      "expected": "Every confirmed out landing is drawn at its corresponding minimap position as a red X."
+    },
+    {
+      "id": "around_06_far_premature",
+      "window_s": [5.5, 7.5],
+      "side": "far",
+      "label": "premature_then_duplicate_flash",
+      "expected": "Do not light the far zone before touchdown; light it once at the true landing."
+    },
+    {
+      "id": "around_19_wrong_near_service_box",
+      "window_s": [18.0, 21.0],
+      "side": "near_then_far",
+      "label": "false_near_and_missed_far",
+      "expected": "The near-side own service-box flash is false. Suppress it and recover the subsequent far-side landing."
+    },
+    {
+      "id": "around_25_26_missed_far",
+      "window_s": [25.0, 26.5],
+      "side": "far",
+      "label": "missed_in_bounds_landing",
+      "expected": "Recover the opponent-side landing."
+    },
+    {
+      "id": "around_30_missed_far",
+      "window_s": [29.0, 31.5],
+      "side": "far",
+      "label": "missed_in_bounds_landing",
+      "expected": "Recover the far-side landing near 30 seconds."
+    },
+    {
+      "id": "around_40_opponent_serve_missed_near",
+      "window_s": [39.0, 41.5],
+      "side": "near",
+      "label": "missed_serve_landing",
+      "expected": "Recover the near-side first landing of the opponent's serve."
+    },
+    {
+      "id": "around_42_lob_missed_far",
+      "window_s": [41.0, 43.0],
+      "side": "far",
+      "label": "missed_lob_landing",
+      "expected": "Recover the far-side landing of the near player's lob."
+    },
+    {
+      "id": "around_43_wide_angle_missed_near_left",
+      "window_s": [42.5, 44.5],
+      "side": "near",
+      "label": "missed_in_bounds_wide_landing",
+      "expected": "Recover the opponent's sharply angled in-bounds landing on the near-left side."
+    },
+    {
+      "id": "around_50_far_premature",
+      "window_s": [49.0, 52.0],
+      "side": "far",
+      "label": "premature_landing",
+      "expected": "Do not create or flash the far-side landing before physical touchdown; retain only the true landing."
+    },
+    {
+      "id": "around_54_slice_missed_far",
+      "window_s": [53.0, 55.5],
+      "side": "far",
+      "label": "missed_slice_landing",
+      "expected": "Recover the far-side landing after the slice."
+    }
+  ]
+}

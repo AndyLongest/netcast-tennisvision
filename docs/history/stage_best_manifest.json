@@ -1,0 +1,68 @@
+{
+  "version": "stage-best-30fps-v2-2026-08-18",
+  "status": "stage_best_for_review",
+  "production_input": {
+    "fps": [29.97, 30.0],
+    "preferred_resolution": "1080p_or_higher",
+    "camera": "fixed_elevated_centered_behind_baseline_full_trapezoidal_court"
+  },
+  "sample": {
+    "width": 1280,
+    "height": 720,
+    "fps": 29.913892078071182,
+    "duration_seconds": 57.9,
+    "frames": 1737,
+    "tracked_frames": 1184,
+    "tracked_percent": 68.2,
+    "observed_frames": 883,
+    "predicted_frames": 301,
+    "unknown_frames": 553,
+    "bounces": 17,
+    "in_court_bounces": 15,
+    "out_bounces": 2,
+    "hits": 38,
+    "court_error_median_px": 0.69,
+    "court_error_p90_px": 1.07
+  },
+  "files": {
+    "notebook": {
+      "path": "notebooks/tennis_detection.ipynb",
+      "sha256": "14a5fd10e33f5dec8a7f33dcbfed29f5e1b08cf499647c79c832003aff7459dc"
+    },
+    "temporal_classifier": {
+      "path": "bounce_sequence.py",
+      "sha256": "284cf3618ae47450192c97339b54a74fbfce8c41c14a82dc8c94d1007e0f9348"
+    },
+    "runner": {
+      "path": "pipeline_runner.py",
+      "sha256": "9a833fbc0d2e9aae93d029cb86f09ab1d32452861e3ae2427f1b0366f75fffee"
+    },
+    "server": {
+      "path": "server.py",
+      "sha256": "2f63aee1acacecc3296208ecc2ca3fa505fd81115d43b9fbb741f829a78dec6b"
+    },
+    "annotated_video": {
+      "path": "data/outputs/swingvision_state_v2_30fps.mp4",
+      "source_sha256": "e519d038a262b6f5ce734f8916c74f25100f31102a542ca526fe802061d604e3"
+    },
+    "scene": {
+      "path": "data/outputs/swingvision_state_v2_30fps_scene3d.json",
+      "source_sha256": "cd40ae018abc0b5d1d132b14970a13e80e97e79ffcc6ac2f4d0cae4b6f11fc5e"
+    },
+    "viewer": {
+      "path": "data/outputs/swingvision_state_v2_30fps_rally3d.html",
+      "source_sha256": "4517a725156ec7dc908eb581c4528908b59c5090606772e06b9560676a7c78bd"
+    },
+    "comparison_video": {
+      "path": "data/outputs/swingvision_v1_vs_v2_30fps.mp4",
+      "source_sha256": "6e31844e1b053b591c898182f61bfcba7cf59fd8e75e3dc61d43ab64665ac061"
+    }
+  },
+  "known_limitations": [
+    "ball_track_coverage_improved_to_68_2_percent_but_is_not_yet_product_grade",
+    "far_court_net_occlusion_remains_hard",
+    "self_trained_ballnet_has_unproven_cross_venue_generalization",
+    "court_line_detection_can_fail_on_unseen_framing_or_clutter",
+    "metrics_are_pipeline_outputs_not_independent_ground_truth"
+  ]
+}
