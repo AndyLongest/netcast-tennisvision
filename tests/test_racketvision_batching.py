@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from racketvision_runtime import DEFAULT_BATCH_SIZE, _cache_key
+from netcast_tennisvision.vision.racketvision import DEFAULT_BATCH_SIZE, _cache_key
 
 
 def test_production_uses_validated_four_frame_gpu_batch() -> None:

@@ -29,7 +29,7 @@ def main() -> None:
     args = parser.parse_args()
 
     root = args.project.resolve()
-    sys.path.insert(0, str(root))
+    sys.path.insert(0, str(root / "src"))
     clip = args.clip.resolve()
     target = root / "data" / "clip.mp4"
     if not clip.exists():

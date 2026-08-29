@@ -10,7 +10,15 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-REQUIRED_IMPORTS = ("cv2", "numpy", "scipy", "sklearn", "torch", "ultralytics")
+REQUIRED_IMPORTS = (
+    "cv2",
+    "netcast_tennisvision",
+    "numpy",
+    "scipy",
+    "sklearn",
+    "torch",
+    "ultralytics",
+)
 
 
 def check(label: str, condition: bool, detail: str = "") -> bool:

@@ -1,8 +1,8 @@
 import json
 import math
 
-import server
-from server import supports_native_fps, video_fingerprint
+from netcast_tennisvision.api import server
+from netcast_tennisvision.api.server import supports_native_fps, video_fingerprint
 
 
 def test_accepts_any_positive_native_frame_rate():

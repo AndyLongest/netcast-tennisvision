@@ -11,37 +11,37 @@ from typing import Any
 
 import numpy as np
 
-from tracking.ballistics import (
+from .ballistics import (
     predict_ballistic_pixel as _ballistic_pixel_prediction,  # noqa: F401 - compatibility API
 )
-from tracking.ballistics import (
+from .ballistics import (
     repair_occluded_flight as _repair_occluded_flight_with_ballistics,
 )
-from tracking.geometry import (
+from .geometry import (
     candidate_xy as _candidate_xy,  # noqa: F401 - compatibility API
 )
-from tracking.geometry import (
+from .geometry import (
     inside_court_projection as _inside_court_projection,
 )
-from tracking.geometry import (
+from .geometry import (
     inside_player_body as _inside_player_body,
 )
-from tracking.geometry import (
+from .geometry import (
     launches_toward_opponent as _launches_toward_opponent,
 )
-from tracking.geometry import (
+from .geometry import (
     near_player as _near_player,
 )
-from tracking.geometry import (
+from .geometry import (
     pixel_to_world_local as _pixel_to_world_local,
 )
-from tracking.smoothing import (
+from .smoothing import (
     build_segment as _build_segment,
 )
-from tracking.smoothing import (
+from .smoothing import (
     repair_isolated_midflight_backtracks as _repair_isolated_midflight_backtracks,
 )
-from tracking.types import TrackerDiagnostics
+from .types import TrackerDiagnostics
 
 
 def track_ball_persistent(

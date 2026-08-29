@@ -1,6 +1,6 @@
 import numpy as np
 
-from temporal_world_tracker import (
+from netcast_tennisvision.tracking.world_tracker import (
     _ballistic_pixel_prediction,
     refine_touchdown_subframe,
     track_ball_persistent,

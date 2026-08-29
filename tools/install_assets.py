@@ -93,7 +93,7 @@ def _extract_racketvision(asset: dict[str, Any], destination: Path, directory: P
 def _rebuild_bounce_classifier(
     asset: dict[str, Any], destination: Path, directory: Path
 ) -> None:
-    from bounce_sequence import train_open_classifier
+    from netcast_tennisvision.events.bounce_sequence import train_open_classifier
 
     reference = directory / "bigDF.csv"
     _download(str(asset["download_url"]), reference)

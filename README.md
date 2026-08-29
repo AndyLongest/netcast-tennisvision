@@ -49,7 +49,7 @@ For development:
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -m "not assets and not integration"
 .\.venv\Scripts\python.exe -m pytest -m assets
-.\.venv\Scripts\python.exe pipeline_runner.py
+.\.venv\Scripts\python.exe -m netcast_tennisvision.pipeline.runner
 .\.venv\Scripts\python.exe tools\release_check.py --mode handoff
 ```
 
@@ -79,14 +79,14 @@ accuracy.
 ```text
 video
   -> court/player/ball candidates (notebook pass A, cached)
-  -> persistent single-ball association (temporal_world_tracker.py)
+  -> persistent single-ball association (tracking/world_tracker.py)
        -> camera and court geometry (tracking/geometry.py)
        -> Kalman + RTS segment smoothing (tracking/smoothing.py)
        -> calibrated 3D gravity model for missing frames only (tracking/ballistics.py)
-  -> contact candidates (landing_event_detector.py)
-       -> competing racket-hit / ground-contact evidence (contact_hypothesis.py)
-  -> sub-frame touchdown fit (landing_detector.py)
-  -> tennis sequence audit (bounce_sequence.py)
+  -> contact candidates (events/landing_event_detector.py)
+       -> competing racket-hit / ground-contact evidence (events/contact_hypothesis.py)
+  -> sub-frame touchdown fit (events/landing_detector.py)
+  -> tennis sequence audit (events/bounce_sequence.py)
   -> annotated video + JSON + 3D viewer (notebook pass B)
 ```
 
@@ -99,7 +99,7 @@ candidate.
 
 | File | Responsibility |
 |---|---|
-| `temporal_world_tracker.py` | Stable public API and single-ball lifecycle/association |
+| `tracking/world_tracker.py` | Stable public API and single-ball lifecycle/association |
 | `tracking/geometry.py` | Homographies, perspective scale, player/racket envelopes |
 | `tracking/smoothing.py` | Forward Kalman pass, RTS backward pass, conservative cleanup |
 | `tracking/ballistics.py` | Robust monocular 3D gravity fit and reprojection checks |
@@ -110,10 +110,10 @@ candidate.
 
 | File | Responsibility |
 |---|---|
-| `landing_event_detector.py` | Finds physically supported contact impulses |
-| `contact_hypothesis.py` | Fuses competing racket-hit and ground-contact explanations |
-| `landing_detector.py` | Estimates touchdown time and position between 30fps samples |
-| `bounce_sequence.py` | Audits tennis hit/bounce order without suppressing visible evidence |
+| `events/landing_event_detector.py` | Finds physically supported contact impulses |
+| `events/contact_hypothesis.py` | Fuses competing racket-hit and ground-contact explanations |
+| `events/landing_detector.py` | Estimates touchdown time and position between 30fps samples |
+| `events/bounce_sequence.py` | Audits tennis hit/bounce order without suppressing visible evidence |
 
 ## Invariants for future changes
 
@@ -135,6 +135,7 @@ candidate.
 
 - [New engineer/Agent handoff](docs/HANDOFF.md)
 - [Current architecture and algorithm rules](docs/CURRENT_ARCHITECTURE.md)
+- [Repository structure and dependency rules](docs/PROJECT_STRUCTURE.md)
 - [Developer handoff guide](docs/DEVELOPMENT.md)
 - [Prioritized next steps](docs/NEXT_STEPS.md)
 - [Local API and report schemas](docs/API_AND_SCHEMAS.md)
@@ -148,13 +149,15 @@ candidate.
 ```text
 Tennis_Vision/
 ├── README.md
-├── pipeline_runner.py
-├── server.py
-├── temporal_world_tracker.py
-├── tracking/
-├── landing_detector.py
-├── landing_event_detector.py
-├── bounce_sequence.py
+├── pyproject.toml
+├── run_ui.ps1
+├── setup.ps1
+├── src/netcast_tennisvision/
+│   ├── api/          # local HTTP service
+│   ├── pipeline/     # production orchestration
+│   ├── vision/       # inference and court calibration
+│   ├── tracking/     # lifecycle, geometry, physics and smoothing
+│   └── events/       # contact, touchdown and tennis rules
 ├── notebooks/
 ├── tests/
 ├── tools/           # optional diagnostics and one-off developer utilities

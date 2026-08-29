@@ -9,9 +9,9 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 
-from racketvision_runtime import detect_video_candidates  # noqa: E402
+from netcast_tennisvision.vision.racketvision import detect_video_candidates  # noqa: E402
 
 CHECKPOINT = ROOT / "models" / "racketvision_balltrack_state_v1.pt"
 

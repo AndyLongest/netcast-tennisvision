@@ -43,7 +43,7 @@ delete, or move a detector observation. Rendering is downstream of both modules.
 
 - Contact evidence combines trajectory impulse, adjacent flight arcs, court geometry,
   player/racket proximity, and optional audio timing.
-- `contact_hypothesis.py` scores the hit and bounce explanations against each other. A
+- `events/contact_hypothesis.py` scores the hit and bounce explanations against each other. A
   player-body overlap alone cannot create a hit, and ambiguous evidence preserves the
   upstream label for audit instead of forcing a new event.
 - Audio cannot create a landing or provide its spatial coordinate.
@@ -81,14 +81,14 @@ Manual landing review windows live in
 
 | Concern | Owner |
 |---|---|
-| RacketVision inference | `racketvision_runtime.py` |
-| Court registration | `court_registration.py` |
-| Ball lifecycle and association | `temporal_world_tracker.py` |
-| Geometry, smoothing, ballistics, trail | `tracking/` |
-| Contact and touchdown | `landing_event_detector.py`, `landing_detector.py` |
-| Tennis sequence audit | `bounce_sequence.py` |
+| RacketVision inference | `src/netcast_tennisvision/vision/racketvision.py` |
+| Court registration | `src/netcast_tennisvision/vision/court_registration.py` |
+| Ball lifecycle and association | `src/netcast_tennisvision/tracking/world_tracker.py` |
+| Geometry, smoothing, ballistics, trail | `src/netcast_tennisvision/tracking/` |
+| Contact and touchdown | `src/netcast_tennisvision/events/` |
+| Tennis sequence audit | `src/netcast_tennisvision/events/bounce_sequence.py` |
 | Orchestration and rendering | `notebooks/tennis_detection.ipynb` |
-| Upload service and UI | `server.py`, `web/` |
+| Upload service and UI | `src/netcast_tennisvision/api/server.py`, `web/` |
 
 Any algorithm change requires tests, the full native-rate demo regression, and review of
 the manual timestamp windows. UI-only work must not alter inference or event data.

@@ -12,7 +12,9 @@ import traceback
 import uuid
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+from netcast_tennisvision.paths import REPOSITORY_ROOT
+
+ROOT = REPOSITORY_ROOT
 NOTEBOOK = ROOT / "notebooks" / "tennis_detection.ipynb"
 STATUS = ROOT / "data" / "job_status.json"
 CLIP = ROOT / "data" / "clip.mp4"
@@ -52,7 +54,7 @@ def install_frozen_bounce_classifier() -> None:
         frozen_model = pickle.load(stream)
     if getattr(frozen_model, "reference_rows_", None) != 3674:
         raise RuntimeError("冻结落点时序模型元数据异常")
-    import bounce_sequence
+    from netcast_tennisvision.events import bounce_sequence
     bounce_sequence.train_open_classifier = lambda _reference_csv: frozen_model
 
 

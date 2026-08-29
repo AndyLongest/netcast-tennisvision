@@ -1,4 +1,7 @@
-from inference_runtime import iter_batched_detections, iter_sparse_person_detections
+from netcast_tennisvision.vision.inference import (
+    iter_batched_detections,
+    iter_sparse_person_detections,
+)
 
 
 class FakeCapture:

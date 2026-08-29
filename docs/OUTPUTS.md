@@ -5,7 +5,7 @@ The project keeps generated files in three deliberately separate locations:
 | Location | Purpose | Safe to overwrite? |
 |---|---|---|
 | `data/clip.mp4` | most recently uploaded source | yes, by the single-job server |
-| `data/outputs/` | most recent upload report | yes, by `pipeline_runner.py` |
+| `data/outputs/` | most recent upload report | yes, by `pipeline/runner.py` |
 | `assets/demo/` | fixed product demo and its frozen report | only when promoting a validated baseline |
 | `data/regression/checks/` | user-reviewed timestamp clips and QA evidence | no |
 | `data/cache/` | reproducible inference caches | yes |

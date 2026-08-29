@@ -25,7 +25,7 @@ SEQUENCE_LENGTH = 4
 
 
 def load_model(checkpoint: Path, device: torch.device):
-    from racketvision_runtime import RacketVisionBallTrack
+    from netcast_tennisvision.vision.racketvision import RacketVisionBallTrack
 
     model = RacketVisionBallTrack()
     payload = torch.load(checkpoint, map_location="cpu", weights_only=False)

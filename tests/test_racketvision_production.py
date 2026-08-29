@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from pipeline_runner import (
+from netcast_tennisvision.pipeline.runner import (
     RACKETVISION_BALLTRACK,
     RACKETVISION_BALLTRACK_SHA256,
     sha256,

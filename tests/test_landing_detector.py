@@ -1,4 +1,4 @@
-from landing_detector import estimate_landing_subframe
+from netcast_tennisvision.events.landing_detector import estimate_landing_subframe
 
 
 def _track(points, contact=5):

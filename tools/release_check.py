@@ -16,6 +16,7 @@ ESSENTIAL = (
     "README.md",
     "docs/HANDOFF.md",
     "docs/CURRENT_ARCHITECTURE.md",
+    "docs/PROJECT_STRUCTURE.md",
     "docs/DEVELOPMENT.md",
     "docs/NEXT_STEPS.md",
     "docs/API_AND_SCHEMAS.md",
@@ -26,8 +27,11 @@ ESSENTIAL = (
     "assets/demo/annotated_clip.mp4",
     "tests/fixtures/production_manifest.json",
     "web/index.html",
-    "server.py",
-    "pipeline_runner.py",
+    "src/netcast_tennisvision/api/server.py",
+    "src/netcast_tennisvision/pipeline/runner.py",
+    "src/netcast_tennisvision/vision/racketvision.py",
+    "src/netcast_tennisvision/tracking/world_tracker.py",
+    "src/netcast_tennisvision/events/landing_event_detector.py",
     "download_models.ps1",
 )
 SECRET_PATTERN = re.compile(
@@ -115,6 +119,12 @@ def main() -> int:
     audit.require((ROOT / ".git").exists(), "command runs from the intended Tennis_Vision repository")
     for relative in ESSENTIAL:
         audit.require((ROOT / relative).is_file(), f"essential file exists: {relative}")
+
+    root_modules = sorted(path.name for path in ROOT.glob("*.py"))
+    audit.require(
+        not root_modules,
+        f"repository root contains no Python modules ({', '.join(root_modules) or 'clean'})",
+    )
 
     files = source_files()
     secret_hits = [str(path.relative_to(ROOT)) for path in files if SECRET_PATTERN.search(path.read_text(encoding="utf-8", errors="ignore"))]

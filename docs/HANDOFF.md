@@ -16,12 +16,12 @@ minimap and interactive 3D report. The browser is intentionally non-technical.
 
 ```text
 web/app.js
-  -> server.py (single resumable local job)
-  -> pipeline_runner.py
+  -> netcast_tennisvision.api.server (single resumable local job)
+  -> netcast_tennisvision.pipeline.runner
   -> notebooks/tennis_detection.ipynb orchestration
-  -> racketvision_runtime.py + temporal_world_tracker.py
-  -> contact_hypothesis.py + landing_event_detector.py + landing_detector.py
-  -> bounce_sequence.py
+  -> vision/racketvision.py + tracking/world_tracker.py
+  -> events/contact_hypothesis.py + events/landing_event_detector.py
+  -> events/landing_detector.py + events/bounce_sequence.py
   -> data/outputs/{annotated_clip.mp4,scene3d.json,rally3d.html}
 ```
 
@@ -65,14 +65,14 @@ code may not depend on its parent workspace.
 
 | Area | Files | Non-negotiable rule |
 |---|---|---|
-| Candidate generation | `racketvision_runtime.py` | frozen public weight, no upload-time training |
-| Association and lifecycle | `temporal_world_tracker.py` | tracking owns ball observations |
+| Candidate generation | `vision/racketvision.py` | frozen public weight, no upload-time training |
+| Association and lifecycle | `tracking/world_tracker.py` | tracking owns ball observations |
 | Smoothing and physics | `tracking/` | real detections remain hard anchors |
-| Contact classification | `contact_hypothesis.py`, `landing_event_detector.py` | hit and bounce compete; audio is timing-only |
-| Landing position | `landing_detector.py` | consumes trajectory, never edits it |
-| Tennis ordering | `bounce_sequence.py` | a volley is allowed; a bounce is not mandatory |
-| Orchestration | `pipeline_runner.py`, notebook | preserve native frame rate and frozen parameters |
-| Local product | `server.py`, `web/` | non-technical UI and resumable single job |
+| Contact classification | `events/contact_hypothesis.py`, `events/landing_event_detector.py` | hit and bounce compete; audio is timing-only |
+| Landing position | `events/landing_detector.py` | consumes trajectory, never edits it |
+| Tennis ordering | `events/bounce_sequence.py` | a volley is allowed; a bounce is not mandatory |
+| Orchestration | `pipeline/runner.py`, notebook | preserve native frame rate and frozen parameters |
+| Local product | `api/server.py`, `web/` | non-technical UI and resumable single job |
 
 ## Definition of done for a change
 

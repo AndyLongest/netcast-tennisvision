@@ -17,7 +17,9 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-ROOT = Path(__file__).resolve().parent
+from netcast_tennisvision.paths import REPOSITORY_ROOT
+
+ROOT = REPOSITORY_ROOT
 DATA = ROOT / "data"
 STATUS = DATA / "job_status.json"
 LOG = DATA / "pipeline.log"
@@ -335,7 +337,7 @@ class Handler(SimpleHTTPRequestHandler):
                 environment["PATH"] = str(ffmpeg_dir) + os.pathsep + environment.get("PATH", "")
             log_handle = LOG.open("wb")
             job_process = subprocess.Popen(
-                [sys.executable, str(ROOT / "pipeline_runner.py")], cwd=ROOT,
+                [sys.executable, "-m", "netcast_tennisvision.pipeline.runner"], cwd=ROOT,
                 env=environment, stdout=log_handle, stderr=subprocess.STDOUT
             )
             job_metadata["pid"] = job_process.pid
@@ -385,7 +387,7 @@ class Handler(SimpleHTTPRequestHandler):
                 normalized.append([x, y])
             import numpy as np
 
-            from court_calibration import validate_manual_calibration
+            from netcast_tennisvision.vision.court_calibration import validate_manual_calibration
             world_quad = np.array(
                 [[0, 0], [10.97, 0], [10.97, 23.77], [0, 23.77]], np.float32)
             validate_manual_calibration(

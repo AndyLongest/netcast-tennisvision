@@ -1,7 +1,8 @@
 # Security policy
 
 Netcast TennisVision currently binds only to `127.0.0.1` and is designed for one trusted local
-operator. Do not expose `server.py` directly to a LAN or the internet: it has no accounts,
+operator. Do not expose `netcast_tennisvision.api.server` directly to a LAN or the internet:
+it has no accounts,
 authentication, tenant isolation or hardened upload sandbox.
 
 ## Sensitive data

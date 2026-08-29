@@ -1,6 +1,9 @@
 import numpy as np
 
-from tracking.trail_rendering import contact_bounded_start, stabilize_screen_trail
+from netcast_tennisvision.tracking.trail_rendering import (
+    contact_bounded_start,
+    stabilize_screen_trail,
+)
 
 
 def _acceleration_energy(points):

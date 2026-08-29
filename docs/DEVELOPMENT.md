@@ -11,10 +11,11 @@ from Git and are prepared by `setup.ps1` according to `assets/MODELS.md`.
 ## 1. Runtime entry points
 
 - `run_ui.ps1` starts the local product UI.
-- `server.py` receives one uploaded video and launches `pipeline_runner.py`.
-- `pipeline_runner.py` executes code cells from `notebooks/tennis_detection.ipynb` and
+- `netcast_tennisvision.api.server` receives one uploaded video and launches
+  `netcast_tennisvision.pipeline.runner`.
+- `pipeline/runner.py` executes code cells from `notebooks/tennis_detection.ipynb` and
   reports progress to `data/job_status.json`.
-- `server.py` stores durable upload identity separately in `data/current_job.json`.
+- `api/server.py` stores durable upload identity separately in `data/current_job.json`.
   Pipeline progress updates are merged with that identity by `/api/status`, allowing a
   refreshed or reopened browser to resume the one active job without uploading it again.
 - The notebook orchestrates detection and rendering. Reusable algorithms belong in Python
@@ -59,16 +60,16 @@ Event modules may read these fields but must not rewrite detection ownership or 
 
 | Change | File |
 |---|---|
-| Birth, association, search radius, termination | `temporal_world_tracker.py` |
+| Birth, association, search radius, termination | `tracking/world_tracker.py` |
 | Court projection, camera pose, player/racket reach | `tracking/geometry.py` |
 | Kalman/RTS output and isolated zigzag cleanup | `tracking/smoothing.py` |
 | High-ball/occlusion physics | `tracking/ballistics.py` |
 | Purple history trail only | `tracking/trail_rendering.py` and `TRAIL_RENDER_MODE` |
-| Contact impulse scoring | `landing_event_detector.py` |
-| Hit-versus-bounce evidence fusion | `contact_hypothesis.py` |
-| Sub-frame touchdown location | `landing_detector.py` |
-| Auto/manual court-confidence policy | `court_calibration.py`, `pipeline_runner.py`, `server.py` |
-| Tennis sequence audit | `bounce_sequence.py` |
+| Contact impulse scoring | `events/landing_event_detector.py` |
+| Hit-versus-bounce evidence fusion | `events/contact_hypothesis.py` |
+| Sub-frame touchdown location | `events/landing_detector.py` |
+| Auto/manual court-confidence policy | `vision/court_calibration.py`, `pipeline/runner.py`, `api/server.py` |
+| Tennis sequence audit | `events/bounce_sequence.py` |
 | UI only | `web/` and rendering cells; do not alter tracking evidence |
 
 The purple trail experiment is deliberately reversible. Set `TRAIL_RENDER_MODE` to
@@ -80,7 +81,9 @@ removing code or changing any analysis output.
 1. Add a minimal synthetic test that fails for the reported behavior.
 2. Change one owning module; avoid compensating thresholds in unrelated modules.
 3. Run `.\.venv\Scripts\python.exe -m pytest -m "not assets and not integration"`.
-4. Run the complete native-30fps baseline sample through `pipeline_runner.py`; add representative native-rate regressions without dropping frames when available.
+4. Run the complete native-30fps baseline sample through
+   `python -m netcast_tennisvision.pipeline.runner`; add representative native-rate
+   regressions without dropping frames when available.
 5. Compare at least ball coverage, real observations, player-hit resets, repaired-frame
    count, and the user-reported timestamp clips.
 6. Reject a change that raises one metric by sacrificing detector-backed observations.

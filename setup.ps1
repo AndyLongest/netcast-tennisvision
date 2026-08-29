@@ -37,6 +37,7 @@ else {
 
 $requirements = if ($RuntimeOnly) { "requirements.txt" } else { "requirements-dev.txt" }
 & $venvPython -m pip install -r (Join-Path $repoRoot $requirements)
+& $venvPython -m pip install --editable $repoRoot
 
 $assetArguments = @("tools\install_assets.py", "--group", "runtime")
 if ($AssetSource) {

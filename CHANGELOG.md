@@ -13,6 +13,14 @@
 
 ## Unreleased — handoff preparation
 
+- Migrated all production Python code into the conventional
+  `src/netcast_tennisvision/` package, grouped by API, pipeline, vision, tracking and
+  event ownership; the repository root no longer contains Python modules.
+- Centralized repository path resolution and switched supported execution to module
+  entry points without changing the frozen algorithm.
+- Revalidated the complete native-rate demo after the structure migration: all three
+  generated artifacts are byte-identical, tracking remains 1220/1123/97, events remain
+  28 bounces and 32 hits, and the warm-cache run completed in 114.118s.
 - Frozen the RacketVision pure-inference production path.
 - Separated tracking, contact, landing, tennis-order and rendering ownership.
 - Added fixed-camera calibration reuse and equivalent four-frame detector batching.

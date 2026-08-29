@@ -1,4 +1,4 @@
-from contact_hypothesis import classify_contact_hypotheses
+from netcast_tennisvision.events.contact_hypothesis import classify_contact_hypotheses
 
 
 def test_close_racket_and_direction_reversal_is_a_hit():

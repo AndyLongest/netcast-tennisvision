@@ -44,7 +44,7 @@ if ($null -eq $port) {
         throw "4173–4183 端口均被占用，无法启动 Netcast TennisVision。"
     }
     $server = Start-Process -FilePath $python `
-        -ArgumentList @("$PSScriptRoot\server.py", "--port", "$port") `
+        -ArgumentList @("-m", "netcast_tennisvision", "--port", "$port") `
         -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -PassThru
     $ready = $false
     for ($attempt = 0; $attempt -lt 30; $attempt++) {

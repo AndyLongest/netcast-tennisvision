@@ -1,6 +1,6 @@
 import json
 
-import pipeline_runner
+from netcast_tennisvision.pipeline import runner as pipeline_runner
 
 
 def test_status_write_retries_a_transient_windows_lock(tmp_path, monkeypatch):

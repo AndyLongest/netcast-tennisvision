@@ -33,7 +33,7 @@
 | 像素点转相机射线 | `tracking/geometry.py` | 球场单应性和相机姿态必须有效 |
 | 重力约束三维飞行 | `tracking/ballistics.py` | 至少5个真实观测，5–9点鲁棒拟合 |
 | 三维点重投影验证 | `tracking/ballistics.py` | 中位数和P90像素误差门限 |
-| 接触分段 | `temporal_world_tracker.py` | 球员击球和bounce边界不跨段 |
+| 接触分段 | `tracking/world_tracker.py` | 球员击球和bounce边界不跨段 |
 | 不确定时回退 | `tracking/ballistics.py` | 只修复缺失帧，不参与真实检测接纳 |
 
 ## 完整性校验

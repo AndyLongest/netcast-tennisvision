@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from court_registration import validate_court_corners
+from .court_registration import validate_court_corners
 
 
 @dataclass(frozen=True)

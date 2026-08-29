@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from court_registration import (
+from netcast_tennisvision.vision.court_registration import (
     court_surface_candidate,
     court_template_score,
     propagate_court_corners,

@@ -1,6 +1,6 @@
 import numpy as np
 
-from landing_event_detector import (
+from netcast_tennisvision.events.landing_event_detector import (
     detect_landing_impulses,
     enforce_one_landing_between_hits,
     score_landing_impulse,

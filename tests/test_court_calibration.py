@@ -1,7 +1,10 @@
 import numpy as np
 import pytest
 
-from court_calibration import automatic_calibration_confidence, validate_manual_calibration
+from netcast_tennisvision.vision.court_calibration import (
+    automatic_calibration_confidence,
+    validate_manual_calibration,
+)
 
 WORLD = np.array([[0, 0], [10.97, 0], [10.97, 23.77], [0, 23.77]], np.float32)
 

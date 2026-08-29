@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from pipeline_runner import (
+from netcast_tennisvision.pipeline.runner import (
     FROZEN_BOUNCE_CLASSIFIER,
     FROZEN_BOUNCE_CLASSIFIER_SHA256,
     RACKETVISION_BALLTRACK,
