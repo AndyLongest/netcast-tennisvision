@@ -19,12 +19,15 @@ Returns the latest pipeline state merged with durable job identity.
 | `video_fingerprint` | size plus first/last 256KiB SHA-256 identity |
 | `fps` | measured native average frame rate |
 | `workload_factor` | approximate work relative to 30fps |
+| `display_correction` | display-only perspective choice, strength and normalized court corners |
 | `calibration` | guided four-corner request when automatic confidence is low |
 
 ### `POST /api/analyze`
 
 Body is the original video bytes. Required headers are `Content-Type`, `X-Filename` and
-`X-Video-Fingerprint`. Only one job runs at a time. A repeated request with the same
+`X-Video-Fingerprint`. Optional `X-Display-Correction` (0–100) and
+`X-Display-Corners` (normalized near-left, near-right, far-right, far-left JSON) select
+display-only perspective correction. Only one job runs at a time. A repeated request with the same
 fingerprint reattaches; a different video receives `409 analysis_in_progress` and never
 overwrites the active clip.
 
@@ -67,3 +70,5 @@ change must update `web/app.js`, the 3D exporter, frozen demo, manifest and test
 - `decision_frame`, never the candidate frame, controls yellow highlighting.
 - Out events render a red cross and never a yellow zone.
 - The minimap filters by the active `rally_id` and does not draw the trajectory.
+- Perspective correction is applied after inference and annotation rendering but before
+  the minimap is composited. It cannot change tracking, contacts, landing coordinates or zones.

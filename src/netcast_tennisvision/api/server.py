@@ -18,6 +18,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from netcast_tennisvision.paths import REPOSITORY_ROOT
+from netcast_tennisvision.vision.display_correction import parse_display_correction
 
 ROOT = REPOSITORY_ROOT
 DATA = ROOT / "data"
@@ -217,7 +218,10 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_response(HTTPStatus.NO_CONTENT)
         self.send_header("Access-Control-Allow-Origin", "null" if self.headers.get("Origin") == "null" else "http://127.0.0.1:4173")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Filename, X-Video-Fingerprint")
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            "Content-Type, X-Filename, X-Video-Fingerprint, X-Display-Correction, X-Display-Corners",
+        )
         self.send_header("Access-Control-Max-Age", "600")
         self.end_headers()
 
@@ -257,6 +261,7 @@ class Handler(SimpleHTTPRequestHandler):
                         "filename": resumed.get("filename"),
                         "fps": resumed.get("fps"),
                         "workload_factor": resumed.get("workload_factor", 1),
+                        "display_correction": resumed.get("display_correction"),
                     }, HTTPStatus.ACCEPTED)
                     return
                 self.send_json({
@@ -277,6 +282,14 @@ class Handler(SimpleHTTPRequestHandler):
             suffix = Path(filename).suffix.lower()
             if suffix not in {".mp4", ".mov", ".webm", ".mkv"}:
                 self.send_json({"error": "不支持的视频格式"}, HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                display_correction = parse_display_correction(
+                    self.headers.get("X-Display-Correction"),
+                    self.headers.get("X-Display-Corners"),
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
                 return
             DATA.mkdir(parents=True, exist_ok=True)
             temporary = DATA / "clip.uploading"
@@ -322,6 +335,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "video_fingerprint": fingerprint,
                 "fps": round(fps, 3),
                 "workload_factor": workload_factor,
+                "display_correction": display_correction,
                 "started_at": int(time.time()),
             }
             # Publish a self-contained queued snapshot first. Until CURRENT_JOB is replaced,
@@ -351,6 +365,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "high_fps": fps >= 48.0,
                 "workload_factor": workload_factor,
                 "video_fingerprint": fingerprint,
+                "display_correction": display_correction,
             }, HTTPStatus.ACCEPTED)
 
     def save_court_calibration(self) -> None:

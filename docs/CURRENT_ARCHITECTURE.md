@@ -28,6 +28,22 @@ native video
 Tracking owns the ball trajectory. Landing logic may read it but must never create,
 delete, or move a detector observation. Rendering is downstream of both modules.
 
+## Display-only perspective correction
+
+After selecting a video, the browser offers either the original camera view or a guided
+perspective-correction preview. The user can choose 0–70% interactively and, when needed,
+remark the four doubles-court baseline corners. The normalized corners and strength are
+stored with the durable job identity. `vision/display_correction.py` applies that fixed
+homography only in the final rendering pass. Inference, court registration, tracking and
+landing classification always receive the untouched source frames. A corrected clean clip
+is emitted alongside the corrected annotated replay so the report's overlay toggle does
+not jump between two geometries. After the projective transform, a court-shaped safe frame
+covering the complete court and both baseline-player bands is automatically fitted back
+into the original output resolution. Irrelevant roof or venue corners are allowed to crop;
+they are not allowed to shrink the match into a thumbnail near the projective vanishing
+line. The browser preview uses the same composed transform. The minimap is composited
+after correction and stays crisp.
+
 ## Ball lifecycle
 
 - A coherent multi-frame hypothesis is required to create a ball track.

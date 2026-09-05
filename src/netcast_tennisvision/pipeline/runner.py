@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 
 from netcast_tennisvision.paths import REPOSITORY_ROOT
+from netcast_tennisvision.vision.display_correction import apply_display_correction
 
 ROOT = REPOSITORY_ROOT
 NOTEBOOK = ROOT / "notebooks" / "tennis_detection.ipynb"
@@ -27,6 +28,18 @@ CALIBRATION_RESPONSE = ROOT / "data" / "court_calibration_response.json"
 CALIBRATION_PREVIEW = ROOT / "data" / "court_calibration_preview.jpg"
 _STATUS_LOCK = threading.Lock()
 _STATUS_REPLACE_ATTEMPTS = 30
+
+
+def read_current_display_correction() -> dict[str, object]:
+    """Read the immutable display choice saved before this job was launched."""
+    try:
+        payload = json.loads((ROOT / "data" / "current_job.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"enabled": False, "strength": 0, "corners": None}
+    config = payload.get("display_correction") if isinstance(payload, dict) else None
+    return config if isinstance(config, dict) else {
+        "enabled": False, "strength": 0, "corners": None,
+    }
 
 
 def sha256(path: Path) -> str:
@@ -202,11 +215,14 @@ def main() -> None:
     except ImportError:
         pass
     notebook = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+    display_correction = read_current_display_correction()
     namespace: dict[str, object] = {
         "__name__": "__main__",
         "_pipeline_inference_progress": inference_progress,
         "_racketvision_inference_progress": racketvision_progress,
         "_pipeline_manual_court_calibration": request_manual_court_calibration,
+        "_pipeline_display_correction": display_correction,
+        "_pipeline_apply_display_correction": apply_display_correction,
     }
     os.chdir(ROOT)
     try:

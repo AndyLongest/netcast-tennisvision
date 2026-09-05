@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#171020" />
   <meta name="description" content="Netcast TennisVision：上传任意原生帧率的固定机位网球视频，自动生成轨迹、落点与三维复盘。" />
   <title>Netcast TennisVision · 看见每一拍，读懂整场比赛</title>
-  <link rel="stylesheet" href="styles.css?v=20260829b" />
+  <link rel="stylesheet" href="styles.css?v=20260905b" />
 </head>
 <body>
   <header class="topbar">
@@ -183,6 +183,29 @@
   </footer>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <dialog id="displayCorrectionDialog" class="display-correction-dialog">
+    <button class="dialog-close" id="correctionCancel" aria-label="关闭">×</button>
+    <span class="dialog-icon">◇</span>
+    <div class="correction-title"><div><span class="step-kicker">画面显示方式</span><h2>要不要矫正球场透视？</h2></div><span class="privacy-chip">只改变展示画面</span></div>
+    <p class="correction-intro">识别始终使用原始视频。开启透视矫正后，可以让远端球场看起来更宽、更均衡。</p>
+    <div class="correction-modes" role="radiogroup" aria-label="画面显示方式">
+      <button class="correction-mode active" type="button" data-correction-mode="original"><i>原</i><span><strong>保持原画</strong><small>保留摄像机的真实纵深</small></span><b>✓</b></button>
+      <button class="correction-mode" type="button" data-correction-mode="corrected"><i>衡</i><span><strong>透视矫正</strong><small>适度展开远端球场</small></span><b>✓</b></button>
+    </div>
+    <section id="correctionControls" class="correction-controls" hidden>
+      <div class="correction-preview-head"><div><strong>效果预览</strong><span id="correctionFrameHint">正在读取视频画面…</span></div><button id="markCourtBtn" type="button">调整球场四角</button></div>
+      <div class="correction-canvas-wrap"><canvas id="correctionPreviewCanvas"></canvas><span class="preview-badge" id="correctionPreviewBadge">30% 矫正</span></div>
+      <div class="court-marking" id="courtMarking" hidden><strong id="courtMarkingStep">第 1 步：点击近端左角</strong><span>近端左 → 近端右 → 远端右 → 远端左</span><button id="courtMarkingReset" type="button">重新标记</button></div>
+      <div class="correction-range-head"><label for="correctionRange">矫正比例</label><output id="correctionValue">30%</output></div>
+      <input id="correctionRange" class="correction-range" type="range" min="0" max="70" step="1" value="30" />
+      <div class="correction-presets" aria-label="快捷比例">
+        <button type="button" data-strength="10">10%</button><button type="button" data-strength="20">20%</button><button class="active" type="button" data-strength="30">30%<small>推荐</small></button><button type="button" data-strength="40">40%</button>
+      </div>
+      <p class="correction-note"><i>i</i><span>固定机位整段视频只计算一次。若绿色四角没有落在真实双打底线交点，可手动调整。</span></p>
+    </section>
+    <div class="correction-actions"><button id="correctionBack" class="secondary-button" type="button">返回选择视频</button><button id="correctionConfirm" class="primary-button" type="button">确认并开始分析</button></div>
+    <video id="correctionSourceVideo" muted playsinline preload="metadata" hidden></video>
+  </dialog>
   <dialog id="courtCalibrationDialog" class="calibration-dialog">
     <span class="dialog-icon">⌗</span><h2>帮系统确认一下球场</h2>
     <p class="calibration-intro" id="calibrationReason">自动识别没有达到可靠标准。只需依次点选四个底线角点，分析就会继续。</p>
@@ -197,6 +220,6 @@
     <button class="primary-button dialog-ok">明白了，开始分析</button>
   </dialog>
   <script src="demo-scene.js?v=20260829a"></script>
-  <script src="app.js?v=20260829d"></script>
+  <script src="app.js?v=20260905d"></script>
 </body>
 </html>

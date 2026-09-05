@@ -5,6 +5,7 @@ const apiUrl = (path) => `${API_BASE}${path}`;
 
 const OUTPUT = {
   original: '../data/clip.mp4',
+  correctedOriginal: '../data/outputs/corrected_clip.mp4',
   annotated: '../data/outputs/annotated_clip.mp4',
   scene: '../data/outputs/scene3d.json',
   viewer: '../data/outputs/rally3d.html',
@@ -18,7 +19,10 @@ const DEMO_OUTPUT = {
   viewer: '../assets/demo/rally3d.html',
 };
 
-const activeOutput = () => state.isDemo ? DEMO_OUTPUT : OUTPUT;
+const activeOutput = () => {
+  if (state.isDemo) return DEMO_OUTPUT;
+  return state.displayCorrection?.enabled ? { ...OUTPUT, original: OUTPUT.correctedOriginal } : OUTPUT;
+};
 
 const ZONES = {
   'Far Backcourt': '远端后场',
@@ -44,6 +48,7 @@ const ACTIVE_BACKEND_STATES = new Set(['queued', 'running', 'needs_court_calibra
 let state = {
   isDemo: true, generated: true, name: '真实比赛样例', duration: 0,
   events: [], scene: null, objectUrl: null, file: null, annotated: true,
+  displayCorrection: { enabled: false, strength: 0, corners: null },
 };
 let toastTimer;
 let demoTimer;
@@ -325,6 +330,7 @@ function resetForNextAnalysis({ announce = false } = {}) {
   state = {
     isDemo: true, generated: true, name: '真实比赛样例', duration: 0,
     events: [], scene: null, objectUrl: null, file: null, annotated: true,
+    displayCorrection: { enabled: false, strength: 0, corners: null },
   };
   setView('welcome');
   if (location.hash) history.replaceState(null, '', location.pathname + location.search);
@@ -370,6 +376,7 @@ function adoptBackendJob(status, { resumed = false } = {}) {
     annotated: false,
     jobId: status.job_id || null,
     videoFingerprint: status.video_fingerprint || null,
+    displayCorrection: status.display_correction || { enabled: false, strength: 0, corners: null },
   };
   setView('processing');
   updateStages(Number(status.progress) || 0);
@@ -407,6 +414,201 @@ async function monitorBackendJob(initialStatus, token, { resumed = false } = {})
   }
 }
 
+const correctionPreview = {
+  frame: document.createElement('canvas'),
+  points: [],
+  strength: 30,
+  corrected: false,
+  marking: false,
+};
+
+function solveLinearSystem(matrix, values) {
+  const size = values.length;
+  const rows = matrix.map((row, index) => [...row, values[index]]);
+  for (let column = 0; column < size; column += 1) {
+    let pivot = column;
+    for (let row = column + 1; row < size; row += 1) {
+      if (Math.abs(rows[row][column]) > Math.abs(rows[pivot][column])) pivot = row;
+    }
+    [rows[column], rows[pivot]] = [rows[pivot], rows[column]];
+    if (Math.abs(rows[column][column]) < 1e-9) throw new Error('球场四角无法形成有效画面');
+    const divisor = rows[column][column];
+    for (let index = column; index <= size; index += 1) rows[column][index] /= divisor;
+    for (let row = 0; row < size; row += 1) {
+      if (row === column) continue;
+      const factor = rows[row][column];
+      for (let index = column; index <= size; index += 1) rows[row][index] -= factor * rows[column][index];
+    }
+  }
+  return rows.map((row) => row[size]);
+}
+
+function homographyFromQuads(source, target) {
+  const matrix = [], values = [];
+  source.forEach(([x, y], index) => {
+    const [u, v] = target[index];
+    matrix.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); values.push(u);
+    matrix.push([0, 0, 0, x, y, 1, -v * x, -v * y]); values.push(v);
+  });
+  return [...solveLinearSystem(matrix, values), 1];
+}
+
+function projectHomography(matrix, x, y) {
+  const scale = matrix[6] * x + matrix[7] * y + matrix[8];
+  return [(matrix[0] * x + matrix[1] * y + matrix[2]) / scale,
+    (matrix[3] * x + matrix[4] * y + matrix[5]) / scale];
+}
+
+function multiplyHomographies(left, right) {
+  const result = new Array(9).fill(0);
+  for (let row = 0; row < 3; row += 1) {
+    for (let column = 0; column < 3; column += 1) {
+      for (let index = 0; index < 3; index += 1) {
+        result[row * 3 + column] += left[row * 3 + index] * right[index * 3 + column];
+      }
+    }
+  }
+  return result;
+}
+
+function fitHomographyToFrame(matrix, width, height, courtPoints) {
+  const [nearLeft, nearRight, farRight, farLeft] = courtPoints;
+  const nearWidth = nearRight[0] - nearLeft[0], farWidth = farRight[0] - farLeft[0];
+  const farY = (farLeft[1] + farRight[1]) / 2;
+  const nearY = (nearLeft[1] + nearRight[1]) / 2;
+  const depth = nearY - farY;
+  const protectedPoints = [
+    [nearLeft[0] - .08 * nearWidth, nearLeft[1] + .18 * depth],
+    [nearRight[0] + .08 * nearWidth, nearRight[1] + .18 * depth],
+    [farRight[0] + .30 * farWidth, farRight[1] - .28 * depth],
+    [farLeft[0] - .30 * farWidth, farLeft[1] - .28 * depth],
+  ];
+  const corners = protectedPoints.map(([x, y]) => projectHomography(matrix, x, y));
+  const xs = corners.map((point) => point[0]), ys = corners.map((point) => point[1]);
+  const minimumX = Math.min(...xs), maximumX = Math.max(...xs);
+  const minimumY = Math.min(...ys), maximumY = Math.max(...ys);
+  const spanX = maximumX - minimumX, spanY = maximumY - minimumY;
+  if (![minimumX, maximumX, minimumY, maximumY, spanX, spanY].every(Number.isFinite)
+      || spanX <= 1 || spanY <= 1) throw new Error('当前比例无法完整容纳画面，请重新标记球场四角');
+  const scale = Math.min(1, width / spanX, height / spanY);
+  const translation = (minimum, maximum, limit) => {
+    const low = minimum * scale, high = maximum * scale;
+    if (scale < .999999) return (limit - (high - low)) / 2 - low;
+    if (low < 0) return -low;
+    if (high > limit) return limit - high;
+    return 0;
+  };
+  const translateX = translation(minimumX, maximumX, width);
+  const translateY = translation(minimumY, maximumY, height);
+  return multiplyHomographies([scale, 0, translateX, 0, scale, translateY, 0, 0, 1], matrix);
+}
+
+function drawWarpTriangle(ctx, source, sourceTriangle, targetTriangle) {
+  const [[x0, y0], [x1, y1], [x2, y2]] = sourceTriangle;
+  const [[u0, v0], [u1, v1], [u2, v2]] = targetTriangle;
+  const denominator = x0 * (y1 - y2) + x1 * (y2 - y0) + x2 * (y0 - y1);
+  if (Math.abs(denominator) < 1e-7) return;
+  const a = (u0 * (y1 - y2) + u1 * (y2 - y0) + u2 * (y0 - y1)) / denominator;
+  const c = (u0 * (x2 - x1) + u1 * (x0 - x2) + u2 * (x1 - x0)) / denominator;
+  const e = (u0 * (x1 * y2 - x2 * y1) + u1 * (x2 * y0 - x0 * y2) + u2 * (x0 * y1 - x1 * y0)) / denominator;
+  const b = (v0 * (y1 - y2) + v1 * (y2 - y0) + v2 * (y0 - y1)) / denominator;
+  const d = (v0 * (x2 - x1) + v1 * (x0 - x2) + v2 * (x1 - x0)) / denominator;
+  const f = (v0 * (x1 * y2 - x2 * y1) + v1 * (x2 * y0 - x0 * y2) + v2 * (x0 * y1 - x1 * y0)) / denominator;
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(u0, v0); ctx.lineTo(u1, v1); ctx.lineTo(u2, v2); ctx.closePath(); ctx.clip();
+  ctx.setTransform(a, b, c, d, e, f); ctx.drawImage(source, 0, 0); ctx.restore();
+}
+
+function correctedTarget(points, strength) {
+  const [nearLeft, nearRight, farRight, farLeft] = points;
+  const nearWidth = nearRight[0] - nearLeft[0], farWidth = farRight[0] - farLeft[0];
+  const equalWidth = (nearWidth + farWidth) / 2, amount = strength / 100;
+  const targetNear = nearWidth + amount * (equalWidth - nearWidth);
+  const targetFar = farWidth + amount * (equalWidth - farWidth);
+  const centre = points.reduce((total, point) => total + point[0], 0) / 4;
+  return [[centre - targetNear / 2, nearLeft[1]], [centre + targetNear / 2, nearRight[1]],
+    [centre + targetFar / 2, farRight[1]], [centre - targetFar / 2, farLeft[1]]];
+}
+
+function renderCorrectionPreview() {
+  const canvas = $('#correctionPreviewCanvas'), source = correctionPreview.frame;
+  if (!source.width) return;
+  canvas.width = source.width; canvas.height = source.height;
+  const ctx = canvas.getContext('2d'); ctx.fillStyle = '#130d1b'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (!correctionPreview.corrected || correctionPreview.marking || correctionPreview.points.length !== 4) {
+    ctx.drawImage(source, 0, 0);
+  } else {
+    try {
+      const courtMatrix = homographyFromQuads(correctionPreview.points,
+        correctedTarget(correctionPreview.points, correctionPreview.strength));
+      const matrix = fitHomographyToFrame(
+        courtMatrix, source.width, source.height, correctionPreview.points,
+      );
+      const columns = 18, rows = 10;
+      for (let row = 0; row < rows; row += 1) {
+        for (let column = 0; column < columns; column += 1) {
+          const x0 = column * source.width / columns, x1 = (column + 1) * source.width / columns;
+          const y0 = row * source.height / rows, y1 = (row + 1) * source.height / rows;
+          const p00 = [x0, y0], p10 = [x1, y0], p11 = [x1, y1], p01 = [x0, y1];
+          const q00 = projectHomography(matrix, x0, y0), q10 = projectHomography(matrix, x1, y0);
+          const q11 = projectHomography(matrix, x1, y1), q01 = projectHomography(matrix, x0, y1);
+          drawWarpTriangle(ctx, source, [p00, p10, p11], [q00, q10, q11]);
+          drawWarpTriangle(ctx, source, [p00, p11, p01], [q00, q11, q01]);
+        }
+      }
+    } catch (error) { ctx.drawImage(source, 0, 0); toast(error.message); }
+  }
+  if (correctionPreview.marking) {
+    const points = correctionPreview.points;
+    if (points.length > 1) {
+      ctx.strokeStyle = '#c4f12c'; ctx.lineWidth = Math.max(2, source.width / 500); ctx.setLineDash([10, 7]);
+      ctx.beginPath(); points.forEach((point, index) => index ? ctx.lineTo(...point) : ctx.moveTo(...point));
+      if (points.length === 4) ctx.closePath(); ctx.stroke(); ctx.setLineDash([]);
+    }
+    points.forEach((point, index) => {
+      ctx.fillStyle = '#c4f12c'; ctx.strokeStyle = '#241232'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(point[0], point[1], Math.max(7, source.width / 125), 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#241232'; ctx.font = `700 ${Math.max(10, source.width / 90)}px system-ui`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(index + 1), point[0], point[1]);
+    });
+  }
+  $('#correctionValue').textContent = `${correctionPreview.strength}%`;
+  $('#correctionPreviewBadge').textContent = correctionPreview.corrected ? `${correctionPreview.strength}% 矫正` : '原始画面';
+  $$('.correction-presets button').forEach((button) => button.classList.toggle('active', Number(button.dataset.strength) === correctionPreview.strength));
+}
+
+function defaultCorrectionPoints(width, height) {
+  return [[.14 * width, .72 * height], [.90 * width, .71 * height],
+    [.61 * width, .31 * height], [.40 * width, .31 * height]];
+}
+
+function setCorrectionMode(corrected) {
+  correctionPreview.corrected = corrected;
+  $$('[data-correction-mode]').forEach((button) => button.classList.toggle('active',
+    (button.dataset.correctionMode === 'corrected') === corrected));
+  $('#correctionControls').hidden = !corrected;
+  renderCorrectionPreview();
+}
+
+function openDisplayCorrection(file) {
+  const dialog = $('#displayCorrectionDialog'), video = $('#correctionSourceVideo');
+  correctionPreview.corrected = false; correctionPreview.strength = 30; correctionPreview.marking = false;
+  $('#correctionRange').value = '30'; $('#courtMarking').hidden = true; setCorrectionMode(false);
+  video.src = state.objectUrl; video.load(); dialog.showModal();
+  video.onloadedmetadata = () => {
+    video.currentTime = Math.min(Math.max(video.duration * .2, .2), 8);
+  };
+  video.onseeked = () => {
+    const width = Math.min(1280, video.videoWidth || 1280), height = Math.round(width * (video.videoHeight || 720) / (video.videoWidth || 1280));
+    correctionPreview.frame.width = width; correctionPreview.frame.height = height;
+    correctionPreview.frame.getContext('2d').drawImage(video, 0, 0, width, height);
+    correctionPreview.points = defaultCorrectionPoints(width, height);
+    $('#correctionFrameHint').textContent = `已截取 ${formatTime(video.currentTime)} 画面用于预览`;
+    renderCorrectionPreview();
+  };
+  video.onerror = () => { dialog.close(); toast('无法读取这段视频的预览画面'); };
+}
+
 function chooseVideo() { $('#videoInput').click(); }
 
 function selectFile(file) {
@@ -418,13 +620,14 @@ function selectFile(file) {
     ...state, isDemo: false, generated: false, name: file.name.replace(/\.[^.]+$/, ''),
     duration: 0, events: [], scene: null, file, objectUrl: URL.createObjectURL(file), annotated: false,
   };
-  startAnalysis();
+  openDisplayCorrection(file);
 }
 
 function startDemo() {
   state = {
     ...state, isDemo: true, generated: true, name: '真实比赛样例', duration: 0,
     events: [], scene: null, file: null, annotated: true,
+    displayCorrection: { enabled: false, strength: 0, corners: null },
   };
   startAnalysis();
 }
@@ -485,6 +688,8 @@ async function runBackendAnalysis() {
         'Content-Type': state.file.type || 'application/octet-stream',
         'X-Filename': encodeURIComponent(state.file.name),
         'X-Video-Fingerprint': fingerprint,
+        'X-Display-Correction': String(state.displayCorrection?.strength || 0),
+        'X-Display-Corners': JSON.stringify(state.displayCorrection?.corners || []),
       },
       body: state.file,
     });
@@ -781,6 +986,63 @@ $('#dropZone').addEventListener('click', (event) => { if (!event.target.closest(
 ['dragleave', 'drop'].forEach((type) => $('#dropZone').addEventListener(type, (event) => { event.preventDefault(); $('#dropZone').classList.remove('dragging'); }));
 $('#dropZone').addEventListener('drop', (event) => { const [file] = event.dataTransfer.files; if (file) selectFile(file); });
 $('#videoInput').addEventListener('change', (event) => { const [file] = event.target.files; if (file) selectFile(file); });
+$$("[data-correction-mode]").forEach((button) => button.addEventListener('click', () => {
+  setCorrectionMode(button.dataset.correctionMode === 'corrected');
+}));
+$('#correctionRange').addEventListener('input', (event) => {
+  correctionPreview.strength = Number(event.target.value); renderCorrectionPreview();
+});
+$$('.correction-presets button').forEach((button) => button.addEventListener('click', () => {
+  correctionPreview.strength = Number(button.dataset.strength);
+  $('#correctionRange').value = String(correctionPreview.strength); renderCorrectionPreview();
+}));
+$('#markCourtBtn').addEventListener('click', () => {
+  correctionPreview.marking = true; correctionPreview.points = [];
+  $('#courtMarking').hidden = false; $('#courtMarkingStep').textContent = '第 1 步：点击近端左角';
+  renderCorrectionPreview();
+});
+$('#courtMarkingReset').addEventListener('click', () => {
+  correctionPreview.marking = true; correctionPreview.points = [];
+  $('#courtMarkingStep').textContent = '第 1 步：点击近端左角'; renderCorrectionPreview();
+});
+$('#correctionPreviewCanvas').addEventListener('click', (event) => {
+  if (!correctionPreview.marking || correctionPreview.points.length >= 4) return;
+  const canvas = event.currentTarget, rect = canvas.getBoundingClientRect();
+  correctionPreview.points.push([
+    (event.clientX - rect.left) * canvas.width / rect.width,
+    (event.clientY - rect.top) * canvas.height / rect.height,
+  ]);
+  const labels = ['近端左角', '近端右角', '远端右角', '远端左角'];
+  if (correctionPreview.points.length === 4) {
+    correctionPreview.marking = false; $('#courtMarking').hidden = true;
+    toast('球场四角已更新，预览已重新计算');
+  } else {
+    $('#courtMarkingStep').textContent = `第 ${correctionPreview.points.length + 1} 步：点击${labels[correctionPreview.points.length]}`;
+  }
+  renderCorrectionPreview();
+});
+function cancelDisplayCorrection() {
+  $('#displayCorrectionDialog').close(); $('#correctionSourceVideo').removeAttribute('src');
+  $('#correctionSourceVideo').load(); $('#videoInput').value = '';
+  if (state.objectUrl) URL.revokeObjectURL(state.objectUrl);
+  state.file = null; state.objectUrl = null;
+}
+$('#correctionCancel').addEventListener('click', cancelDisplayCorrection);
+$('#correctionBack').addEventListener('click', cancelDisplayCorrection);
+$('#displayCorrectionDialog').addEventListener('cancel', (event) => { event.preventDefault(); cancelDisplayCorrection(); });
+$('#correctionConfirm').addEventListener('click', () => {
+  if (correctionPreview.corrected && correctionPreview.points.length !== 4) {
+    toast('请先完成球场四角标记'); return;
+  }
+  const width = correctionPreview.frame.width || 1, height = correctionPreview.frame.height || 1;
+  state.displayCorrection = correctionPreview.corrected ? {
+    enabled: correctionPreview.strength > 0,
+    strength: correctionPreview.strength,
+    corners: correctionPreview.points.map(([x, y]) => [x / width, y / height]),
+  } : { enabled: false, strength: 0, corners: null };
+  $('#displayCorrectionDialog').close(); $('#correctionSourceVideo').removeAttribute('src');
+  $('#correctionSourceVideo').load(); startAnalysis();
+});
 $('#demoBtn').addEventListener('click', startDemo);
 $('#heroDemoBtn').addEventListener('click', startDemo);
 $$('.event-filter button').forEach((button) => button.addEventListener('click', () => {
