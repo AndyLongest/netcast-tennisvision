@@ -9,7 +9,7 @@ Tennis_Vision/
 ├── src/netcast_tennisvision/
 │   ├── api/          # HTTP transport, upload lifecycle, resumable job state
 │   ├── pipeline/     # production orchestration and notebook execution
-│   ├── vision/       # frozen-model inference and court calibration
+│   ├── vision/       # frozen inference, court calibration, and player identity
 │   ├── tracking/     # ball lifecycle, geometry, physics and smoothing
 │   ├── events/       # contact classification, touchdown and tennis ordering
 │   └── paths.py      # the single repository-root resolver

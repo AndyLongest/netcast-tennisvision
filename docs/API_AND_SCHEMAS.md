@@ -44,6 +44,8 @@ Top-level fields currently include:
 - `frames`: per-frame compact 3D/display state;
 - `bounces`: confirmed touchdown events;
 - `hits`: racket-contact events;
+- `player_identities`: stable A/B display colours;
+- `player_identity_metrics`: auditable OSNet-AIN sampling and side-change diagnostics;
 - court/player/camera fields used by the self-contained viewer.
 
 Important bounce fields:
@@ -58,6 +60,12 @@ Important bounce fields:
 | `source` | observed, interpolated/modelled, or recovered-candidate evidence |
 | `landing_confidence` | evidence score, not a calibrated probability |
 | `landing_uncertainty_px` | image-space uncertainty when available |
+| `player_id` | identity of the player whose preceding strike produced this landing |
+| `identity_confidence` | OSNet pair-assignment margin; not a calibrated probability |
+| `identity_source` | `preceding_hit` or the clipped-rally fallback `opposite_landing_half` |
+
+Hit records also expose `player_id` and `identity_confidence`. Identity is attached after
+tracking and touchdown decisions, so it is not an input to ball or landing accuracy.
 
 Frame field `b` is the compact ball coordinate `[court_x, court_y, height]` or `null`.
 Frame field `c` is the compact confidence/source class consumed by the viewer. Any schema
@@ -70,5 +78,6 @@ change must update `web/app.js`, the 3D exporter, frozen demo, manifest and test
 - `decision_frame`, never the candidate frame, controls yellow highlighting.
 - Out events render a red cross and never a yellow zone.
 - The minimap filters by the active `rally_id` and does not draw the trajectory.
+- In-court landing dots use the hitter's A/B colour; out events remain red crosses.
 - Perspective correction is applied after inference and annotation rendering but before
   the minimap is composited. It cannot change tracking, contacts, landing coordinates or zones.

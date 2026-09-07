@@ -782,9 +782,11 @@ async function loadScene(path) {
     id: `b${index}`, number: index + 1, type: 'bounce', time: bounce.t,
     zone: ZONES[bounce.zone] || bounce.zone, rawZone: bounce.zone,
     x: bounce.x, y: bounce.y, confidence: bounce.landing_confidence,
+    playerId: bounce.player_id || null,
   }));
   const hits = state.scene.hits.map((hit, index) => ({
     id: `h${index}`, number: index + 1, type: 'hit', time: hit.t, zone: '球员击球',
+    playerId: hit.player_id || null,
   }));
   state.events = [...bounces, ...hits].sort((a, b) => a.time - b.time);
 }
@@ -884,7 +886,8 @@ function buildEvents(filter = 'all') {
     const button = document.createElement('button');
     const isOut = event.rawZone === 'Out';
     button.className = `event-item ${event.type}${isOut ? ' out' : ''}`;
-    button.innerHTML = `<span class="event-symbol">${event.type === 'bounce' ? (isOut ? '×' : '⌄') : '✦'}</span><span><strong>${event.type === 'bounce' ? `第 ${event.number} 次落地` : `第 ${event.number} 次击球`}</strong><small>${event.zone}</small></span><time>${formatTime(event.time)}</time>`;
+    const player = event.playerId ? ` · 球员 ${event.playerId}` : '';
+    button.innerHTML = `<span class="event-symbol">${event.type === 'bounce' ? (isOut ? '×' : '⌄') : '✦'}</span><span><strong>${event.type === 'bounce' ? `第 ${event.number} 次落地` : `第 ${event.number} 次击球`}</strong><small>${event.zone}${player}</small></span><time>${formatTime(event.time)}</time>`;
     button.addEventListener('click', () => seek(event));
     list.appendChild(button);
   });
@@ -945,9 +948,10 @@ function drawHeatmap() {
       ctx.save(); ctx.strokeStyle = '#ff665e'; ctx.shadowColor = 'rgba(255,80,72,.8)'; ctx.shadowBlur = 12; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.moveTo(x - 6, y - 6); ctx.lineTo(x + 6, y + 6); ctx.moveTo(x + 6, y - 6); ctx.lineTo(x - 6, y + 6); ctx.stroke(); ctx.restore(); return;
     }
+    const playerColor = state.scene?.player_identities?.[bounce.player_id]?.color || '#d7ff78';
     const glow = ctx.createRadialGradient(x, y, 0, x, y, 19);
-    glow.addColorStop(0, 'rgba(229,255,141,.95)'); glow.addColorStop(0.25, 'rgba(199,255,94,.52)'); glow.addColorStop(1, 'rgba(199,255,94,0)');
-    ctx.fillStyle = glow; ctx.fillRect(x - 22, y - 22, 44, 44); ctx.fillStyle = index % 5 === 0 ? '#fff' : '#d7ff78';
+    glow.addColorStop(0, `${playerColor}ee`); glow.addColorStop(0.25, `${playerColor}78`); glow.addColorStop(1, `${playerColor}00`);
+    ctx.fillStyle = glow; ctx.fillRect(x - 22, y - 22, 44, 44); ctx.fillStyle = playerColor;
     ctx.beginPath(); ctx.arc(x, y, index % 5 === 0 ? 3 : 2.2, 0, Math.PI * 2); ctx.fill();
   });
 }

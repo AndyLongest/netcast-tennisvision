@@ -33,6 +33,19 @@ def test_notebook_routes_candidates_from_racketvision():
     assert "ball_model = YOLO" not in source
 
 
+def test_minimap_is_not_suppressed_when_court_fit_is_unavailable():
+    notebook = json.loads((ROOT / "notebooks/tennis_detection.ipynb").read_text("utf-8"))
+    render_cell = next(
+        "".join(cell.get("source", []))
+        for cell in notebook["cells"]
+        if "draw_minimap(frame, render_minimap(" in "".join(cell.get("source", []))
+        and "encoder.stdin.write(frame.tobytes())" in "".join(cell.get("source", []))
+    )
+    minimap_block = render_cell[render_cell.rfind("# The minimap is a fixed ITF-court UI layer"):]
+    assert "draw_minimap(frame, render_minimap(" in minimap_block
+    assert 'if meta["is_court"]' not in minimap_block.split("encoder.stdin.write", 1)[0]
+
+
 def test_landing_feedback_contract_is_preserved():
     notebook = json.loads((ROOT / "notebooks/tennis_detection.ipynb").read_text("utf-8"))
     source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])

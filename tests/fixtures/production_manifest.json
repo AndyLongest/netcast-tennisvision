@@ -11,6 +11,10 @@
     "bounce_classifier": {
       "path": "models/bounce_classifier_production_v1.pkl",
       "sha256": "b53b1d3330af2b457e3b329c94ded9994d3098c6c7b3850fa80c727539ec7cfb"
+    },
+    "player_identity": {
+      "path": "models/osnet_ain_x1_0_msmt17_256x128_amsgrad_ep50_lr0.0015_coslr_b64_fb10_softmax_labsmth_flip_jitter.pth",
+      "sha256": "8a07e8da38946f7cee37f4561617bf8b6d2fe8f3a4027852893ea092e46d919f"
     }
   },
   "demo": {
@@ -18,20 +22,20 @@
     "fps": 29.913892078071182,
     "frames": 1737,
     "positioned_frames": 1220,
-    "bounces": 28,
-    "hits": 32,
+    "bounces": 29,
+    "hits": 35,
     "outputs": {
       "video": {
         "path": "assets/demo/annotated_clip.mp4",
-        "sha256": "623492af6252818afa98e5942d51d008799f4bf56fc13b2ec3ef6f6add9cd709"
+        "sha256": "bbd936a2d6446efd1f4bfb88dd97ea7253b521997a660308b93be349176db4d1"
       },
       "scene": {
         "path": "assets/demo/scene3d.json",
-        "sha256": "6f9f16615da1ed060db0db3596157947d9e8b0ac14953fd0d5d0a0d3437ed61b"
+        "sha256": "465312959b054691bf06decd07a1b16712e196982ab04cf18a8e61911e19ed49"
       },
       "viewer": {
         "path": "assets/demo/rally3d.html",
-        "sha256": "1a3f3f45eb7620793e4e0e1cfb3b762626b2ec03536cfbb2418b1d1f8a85ac23"
+        "sha256": "1be92e4fde13250d009373f47cb3d65a83fbdfde9870936987873ef9e6f72dd8"
       }
     }
   },

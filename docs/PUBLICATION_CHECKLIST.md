@@ -24,7 +24,7 @@ resolved and `python tools/release_check.py --mode public` passes.
 - [x] Pin the Ultralytics official checkpoint URL and checksum.
 - [x] Make the bounce classifier reproducible from its pinned source CSV.
 - [ ] Run model installation in an empty clone and verify every final SHA-256.
-- [ ] Confirm the fixed browser demo reports 1737 frames, 28 bounces and 32 hits.
+- [ ] Confirm the fixed browser demo reports 1737 frames, 29 bounces and 35 hits.
 
 ## Repository blockers
 

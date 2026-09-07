@@ -90,7 +90,7 @@ removing code or changing any analysis output.
 7. Update `docs/CURRENT_ARCHITECTURE.md` and the reference mapping when behavior changes.
 
 Current frozen-demo regression: 1220 positioned frames and 1123 detector-backed
-observations on the 1737-frame sample, with 28 confirmed bounces and 32 racket hits.
+observations on the 1737-frame sample, with 29 confirmed bounces and 35 racket hits.
 These are preservation counters, not independent accuracy claims.
 
 The optional quasi-realtime research path and its rejected A/B variants are documented

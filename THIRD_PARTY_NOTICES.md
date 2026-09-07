@@ -27,6 +27,15 @@ project license decision in `docs/PUBLICATION_CHECKLIST.md`.
   alternative for incompatible proprietary use.
 - Publication status: owner/legal decision required before public or commercial release.
 
+## Torchreid / OSNet-AIN
+
+- Source: <https://github.com/KaiyangZhou/deep-person-reid>
+- Model repository: <https://huggingface.co/kaiyangzhou/osnet>
+- Use: sparse appearance embeddings that keep player A/B identity stable across court-side changes.
+- Torchreid source license stated by upstream: MIT.
+- The exact OSNet-AIN checkpoint revision and SHA-256 are frozen in `assets/manifest.json`.
+- Publication status: checkpoint training-data terms require review before public or commercial release.
+
 ## Scientific references
 
 Citation metadata and source links live in `docs/references/references.bib` and

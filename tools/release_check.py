@@ -80,8 +80,8 @@ def check_demo(audit: Audit) -> None:
     scene_path = ROOT / production["demo"]["outputs"]["scene"]["path"]
     scene = json.loads(scene_path.read_text(encoding="utf-8"))
     audit.require(len(scene["frames"]) == production["demo"]["frames"], "demo frame count matches manifest")
-    audit.require(len(scene["bounces"]) == production["demo"]["bounces"] == 28, "demo has frozen 28 bounces")
-    audit.require(len(scene["hits"]) == production["demo"]["hits"] == 32, "demo has frozen 32 hits")
+    audit.require(len(scene["bounces"]) == production["demo"]["bounces"] == 29, "demo has frozen 29 bounces")
+    audit.require(len(scene["hits"]) == production["demo"]["hits"] == 35, "demo has frozen 35 hits")
     audit.require(sha256(scene_path) == production["demo"]["outputs"]["scene"]["sha256"], "demo scene checksum matches manifest")
     compact = json.dumps(scene, ensure_ascii=False, separators=(",", ":"))
     expected_js = f"globalThis.TENNIS_DEMO_SCENE={compact};\n"

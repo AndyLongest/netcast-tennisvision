@@ -18,6 +18,7 @@ native video
   -> one multi-frame court calibration + per-frame player geometry
   -> frozen RacketVision MS-TrackNetV3 candidates
   -> persistent physical-ball association
+  -> court-aware temporal player tracks + sparse OSNet-AIN identity
   -> constrained trajectory and short-gap smoothing
   -> hit/contact candidates
   -> competing racket-hit and ground-contact evidence
@@ -85,8 +86,8 @@ after correction and stays crisp.
 | Positioned trajectory frames | 1220 |
 | Detector-backed observations | 1123 |
 | Smoothed short-gap frames | 97 |
-| Confirmed bounces | 28 |
-| Racket hits | 32 |
+| Confirmed bounces | 29 |
+| Racket hits | 35 |
 | Fixed calibration court-line error | 1.23px |
 
 These counters detect regressions; they are not manually labelled accuracy metrics.
@@ -99,6 +100,7 @@ Manual landing review windows live in
 |---|---|
 | RacketVision inference | `src/netcast_tennisvision/vision/racketvision.py` |
 | Court registration | `src/netcast_tennisvision/vision/court_registration.py` |
+| Player identity and landing ownership | `src/netcast_tennisvision/vision/player_identity.py` |
 | Ball lifecycle and association | `src/netcast_tennisvision/tracking/world_tracker.py` |
 | Geometry, smoothing, ballistics, trail | `src/netcast_tennisvision/tracking/` |
 | Contact and touchdown | `src/netcast_tennisvision/events/` |
@@ -108,6 +110,20 @@ Manual landing review windows live in
 
 Any algorithm change requires tests, the full native-rate demo regression, and review of
 the manual timestamp windows. UI-only work must not alter inference or event data.
+
+## Player identity contract
+
+- The feet of every person detection are projected into fixed court coordinates. At most
+  one active player is selected on each half; implausible short-term jumps are rejected
+  rather than treated as a new player.
+- OSNet-AIN appearance is sampled every fifth native frame, but it only proposes A/B.
+  A side swap needs three strong paired observations *and* enough elapsed time for both
+  people to travel between their measured court positions at a 12m/s upper bound.
+- Missing or ambiguous samples preserve the last stable identity and confidence. They do
+  not create a new identity and cannot make a landing marker change colour by themselves.
+- A confirmed landing inherits the stable identity at the preceding racket contact. Only
+  a clip whose contact occurred before its first frame uses the opposite-landing-half
+  fallback.
 
 ## Fixed-camera court policy
 
@@ -125,7 +141,7 @@ the displayed adjacent zone.
 
 The recall layer added afterwards leaves those 1220 main-trajectory frames unchanged. On
 the same regression it restores one coherent rejected-candidate fragment: a far-backcourt
-touchdown at 25.91s followed by the receiver's racket contact, producing 28 bounces and 32
+touchdown at 25.91s followed by the receiver's racket contact, producing 29 bounces and 35
 hits. Three opposite-player contact intervals lacking physical ground evidence remain
 landing-free as possible volleys. Set `TENNISVISION_RALLY_RECOVERY=0` for an exact rollback.
 

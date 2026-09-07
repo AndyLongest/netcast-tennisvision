@@ -46,6 +46,19 @@
       "download_url": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n-seg.pt"
     },
     {
+      "id": "torchreid-osnet-ain-x1-0-msmt17",
+      "group": "runtime",
+      "path": "models/osnet_ain_x1_0_msmt17_256x128_amsgrad_ep50_lr0.0015_coslr_b64_fb10_softmax_labsmth_flip_jitter.pth",
+      "size": 17293009,
+      "sha256": "8a07e8da38946f7cee37f4561617bf8b6d2fe8f3a4027852893ea092e46d919f",
+      "required": true,
+      "source": "Torchreid OSNet-AIN x1.0 checkpoint trained on MSMT17",
+      "source_url": "https://huggingface.co/kaiyangzhou/osnet/blob/a5c5cc037c24235cda3b21085b93ad77c9616224/osnet_ain_x1_0_msmt17_256x128_amsgrad_ep50_lr0.0015_coslr_b64_fb10_softmax_labsmth_flip_jitter.pth",
+      "license": "Torchreid code MIT; checkpoint training-data terms require publication review",
+      "delivery": "download",
+      "download_url": "https://huggingface.co/kaiyangzhou/osnet/resolve/a5c5cc037c24235cda3b21085b93ad77c9616224/osnet_ain_x1_0_msmt17_256x128_amsgrad_ep50_lr0.0015_coslr_b64_fb10_softmax_labsmth_flip_jitter.pth"
+    },
+    {
       "id": "validated-demo-source",
       "group": "demo",
       "path": "assets/demo/demo.mp4",
@@ -62,8 +75,8 @@
       "id": "validated-demo-annotated",
       "group": "demo",
       "path": "assets/demo/annotated_clip.mp4",
-      "size": 5358237,
-      "sha256": "623492af6252818afa98e5942d51d008799f4bf56fc13b2ec3ef6f6add9cd709",
+      "size": 5388547,
+      "sha256": "bbd936a2d6446efd1f4bfb88dd97ea7253b521997a660308b93be349176db4d1",
       "required": true,
       "source": "Generated from validated-demo-source by production baseline",
       "source_url": null,

@@ -23,6 +23,11 @@ RACKETVISION_BALLTRACK = ROOT / "models" / "racketvision_balltrack_state_v1.pt"
 RACKETVISION_BALLTRACK_SHA256 = "64c871b5079d7f3440b377ef5bb66c9ed070ed91060e075c8672c5b7ab4c691f"
 FROZEN_BOUNCE_CLASSIFIER = ROOT / "models" / "bounce_classifier_production_v1.pkl"
 FROZEN_BOUNCE_CLASSIFIER_SHA256 = "b53b1d3330af2b457e3b329c94ded9994d3098c6c7b3850fa80c727539ec7cfb"
+PLAYER_IDENTITY_MODEL = ROOT / "models" / (
+    "osnet_ain_x1_0_msmt17_256x128_amsgrad_ep50_lr0.0015_coslr_"
+    "b64_fb10_softmax_labsmth_flip_jitter.pth"
+)
+PLAYER_IDENTITY_MODEL_SHA256 = "8a07e8da38946f7cee37f4561617bf8b6d2fe8f3a4027852893ea092e46d919f"
 CALIBRATION_REQUEST = ROOT / "data" / "court_calibration_request.json"
 CALIBRATION_RESPONSE = ROOT / "data" / "court_calibration_response.json"
 CALIBRATION_PREVIEW = ROOT / "data" / "court_calibration_preview.jpg"
@@ -69,6 +74,16 @@ def install_frozen_bounce_classifier() -> None:
         raise RuntimeError("冻结落点时序模型元数据异常")
     from netcast_tennisvision.events import bounce_sequence
     bounce_sequence.train_open_classifier = lambda _reference_csv: frozen_model
+
+
+def verify_player_identity_model() -> str:
+    """Verify the OSNet-AIN checkpoint before any uploaded frame is processed."""
+    if not PLAYER_IDENTITY_MODEL.exists():
+        raise RuntimeError(f"缺少球员身份模型：{PLAYER_IDENTITY_MODEL.name}")
+    actual_hash = sha256(PLAYER_IDENTITY_MODEL)
+    if actual_hash != PLAYER_IDENTITY_MODEL_SHA256:
+        raise RuntimeError("球员身份模型校验失败，拒绝开始分析")
+    return actual_hash
 
 
 def write_status(
@@ -180,9 +195,10 @@ def request_manual_court_calibration(
 
 
 def main() -> None:
-    write_status("running", 2, "正在加载 RacketVision 与冻结落点模型（纯推理）")
+    write_status("running", 2, "正在加载冻结的网球、落点与球员身份模型（纯推理）")
     verify_racketvision_balltrack()
     install_frozen_bounce_classifier()
+    verify_player_identity_model()
     os.environ["TENNISVISION_MODEL_MODE"] = "racketvision_open_weights"
     # Keep the remaining numerical pipeline reproducible as well.
     random.seed(20260824)

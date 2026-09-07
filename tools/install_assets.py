@@ -10,7 +10,9 @@ import pickle
 import shutil
 import sys
 import tempfile
+import time
 import urllib.request
+from urllib.parse import unquote, urlsplit
 from pathlib import Path
 from typing import Any
 
@@ -47,11 +49,35 @@ def valid(asset: dict[str, Any], path: Path) -> bool:
 
 
 def _download(url: str, destination: Path) -> None:
+    parsed = urlsplit(url)
+    parts = parsed.path.strip("/").split("/")
+    if parsed.netloc == "huggingface.co" and "resolve" in parts:
+        # Hugging Face redirects large files to signed object-storage URLs. The official
+        # client resumes interrupted transfers and is materially more reliable than a
+        # single urllib stream on Windows networks that reset long TLS connections.
+        from huggingface_hub import hf_hub_download
+
+        marker = parts.index("resolve")
+        cached = hf_hub_download(
+            repo_id="/".join(parts[:marker]),
+            revision=unquote(parts[marker + 1]),
+            filename=unquote("/".join(parts[marker + 2:])),
+        )
+        shutil.copy2(cached, destination)
+        return
     request = urllib.request.Request(
         url, headers={"User-Agent": "Netcast-TennisVision-asset-installer/1"}
     )
-    with urllib.request.urlopen(request, timeout=120) as response, destination.open("wb") as output:
-        shutil.copyfileobj(response, output)
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response, destination.open("wb") as output:
+                shutil.copyfileobj(response, output)
+            return
+        except OSError:
+            destination.unlink(missing_ok=True)
+            if attempt == 2:
+                raise
+            time.sleep(1.5 * (attempt + 1))
 
 
 def _verify_source(asset: dict[str, Any], path: Path) -> None:

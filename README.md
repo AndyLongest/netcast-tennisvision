@@ -20,11 +20,11 @@ For a new engineer on Windows:
 ```
 
 `setup.ps1` creates `.venv`, installs the validated Python/PyTorch stack, downloads or
-rebuilds the three exact checksummed models, and runs an environment audit. The fixed
+rebuilds/downloads the four exact checksummed models, and runs an environment audit. The fixed
 source and annotated demo videos already travel with the repository. For model provenance,
 download details and offline installation, read [assets/MODELS.md](assets/MODELS.md).
 
-If the machine is offline, copy the three final model files from an installed machine and
+If the machine is offline, copy the four final model files from an installed machine and
 use:
 
 ```powershell
@@ -67,8 +67,8 @@ RacketVision pipeline produces:
 | Detector-backed observations | 1123 |
 | Short occlusion predictions | 97 |
 | Mid-flight reverse spikes repaired | 4 |
-| Confirmed ground bounces | 28 |
-| Racket hits | 32 |
+| Confirmed ground bounces | 29 |
+| Racket hits | 35 |
 
 These are pipeline regression counters, not independently labelled accuracy metrics.
 They prevent a refactor from silently losing observations but do not prove line-calling
@@ -101,6 +101,7 @@ candidate.
 |---|---|
 | `tracking/world_tracker.py` | Stable public API and single-ball lifecycle/association |
 | `tracking/geometry.py` | Homographies, perspective scale, player/racket envelopes |
+| `vision/player_identity.py` | OSNet-AIN player A/B identity, changeover hysteresis, landing ownership |
 | `tracking/smoothing.py` | Forward Kalman pass, RTS backward pass, conservative cleanup |
 | `tracking/ballistics.py` | Robust monocular 3D gravity fit and reprojection checks |
 | `tracking/trail_rendering.py` | Reversible, screen-space stabilization of the purple history trail |

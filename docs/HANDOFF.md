@@ -20,6 +20,7 @@ web/app.js
   -> netcast_tennisvision.pipeline.runner
   -> notebooks/tennis_detection.ipynb orchestration
   -> vision/racketvision.py + tracking/world_tracker.py
+  -> vision/player_identity.py (OSNet-AIN labels only; never feeds ball tracking)
   -> events/contact_hypothesis.py + events/landing_event_detector.py
   -> events/landing_detector.py + events/bounce_sequence.py
   -> data/outputs/{annotated_clip.mp4,scene3d.json,rally3d.html}
@@ -54,7 +55,7 @@ code may not depend on its parent workspace.
 - Input regression floor: native 29.97/30fps; every positive native frame rate is accepted.
 - Frames are never dropped or interpolated.
 - Fixed demo: 1737 frames, 1220 positioned ball frames, 1123 detector anchors,
-  28 confirmed bounces and 32 racket hits.
+  29 confirmed bounces and 35 racket hits.
 - Court calibration is performed once for a fixed camera and reused for every frame.
 - A yellow zone appears only after a confirmed in-court touchdown.
 - An out ball creates a red cross; the minimap contains only the current rally.
@@ -66,6 +67,7 @@ code may not depend on its parent workspace.
 | Area | Files | Non-negotiable rule |
 |---|---|---|
 | Candidate generation | `vision/racketvision.py` | frozen public weight, no upload-time training |
+| Player identity | `vision/player_identity.py` | sparse OSNet-AIN embeddings, joint A/B assignment, three-sample side-change hysteresis |
 | Association and lifecycle | `tracking/world_tracker.py` | tracking owns ball observations |
 | Smoothing and physics | `tracking/` | real detections remain hard anchors |
 | Contact classification | `events/contact_hypothesis.py`, `events/landing_event_detector.py` | hit and bounce compete; audio is timing-only |

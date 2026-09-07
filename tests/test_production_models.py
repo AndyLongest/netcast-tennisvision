@@ -7,6 +7,8 @@ import pytest
 from netcast_tennisvision.pipeline.runner import (
     FROZEN_BOUNCE_CLASSIFIER,
     FROZEN_BOUNCE_CLASSIFIER_SHA256,
+    PLAYER_IDENTITY_MODEL,
+    PLAYER_IDENTITY_MODEL_SHA256,
     RACKETVISION_BALLTRACK,
     RACKETVISION_BALLTRACK_SHA256,
 )
@@ -28,3 +30,12 @@ def test_racketvision_production_weights_are_frozen():
 def test_temporal_bounce_classifier_is_frozen():
     actual = hashlib.sha256(FROZEN_BOUNCE_CLASSIFIER.read_bytes()).hexdigest()
     assert actual == FROZEN_BOUNCE_CLASSIFIER_SHA256
+
+
+def test_player_identity_weights_are_frozen():
+    manifest = json.loads(
+        (ROOT / "tests/fixtures/production_manifest.json").read_text(encoding="utf-8")
+    )
+    actual = hashlib.sha256(PLAYER_IDENTITY_MODEL.read_bytes()).hexdigest()
+    assert actual == PLAYER_IDENTITY_MODEL_SHA256
+    assert actual == manifest["weights"]["player_identity"]["sha256"]
