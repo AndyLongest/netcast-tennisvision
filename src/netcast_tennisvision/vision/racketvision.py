@@ -131,31 +131,104 @@ def _median_background(video: Path, total_frames: int, samples: int = 180) -> np
     return np.median(np.stack(frames), axis=0).astype(np.uint8)
 
 
+def _decode_candidates(
+    heatmap: np.ndarray,
+    threshold: float,
+    scale_x: float,
+    scale_y: float,
+    *,
+    max_candidates: int = 1,
+    alternative_threshold: float | None = None,
+) -> list[tuple]:
+    """Decode distinct heatmap components without changing the legacy first choice.
+
+    Match footage normally contains one relevant ball, so production historically kept
+    only the largest connected component.  A training court can contain many stationary
+    loose balls: one of those can win the largest-component decision even while the fed
+    ball is also present in the heatmap.  Training-mode association therefore needs the
+    bounded list of alternatives.  The largest component remains item zero, making
+    ``max_candidates=1`` bit-for-bit compatible with the original decoder.
+    """
+    def contours_at(level: float) -> list[np.ndarray]:
+        mask = (heatmap > level).astype(np.uint8) * 255
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        return list(contours)
+
+    def contour_score(contour: np.ndarray) -> tuple[float, float]:
+        x, y, width, height = cv2.boundingRect(contour)
+        return float(np.max(heatmap[y:y + height, x:x + width])), cv2.contourArea(contour)
+
+    def decode_contour(contour: np.ndarray) -> tuple[float, float, float, float, float]:
+        x, y, width, height = cv2.boundingRect(contour)
+        confidence = float(np.mean(heatmap[y:y + height, x:x + width]))
+        return (
+            (x + width / 2.0) * scale_x,
+            (y + height / 2.0) * scale_y,
+            confidence,
+            max(1.0, width * scale_x),
+            max(1.0, height * scale_y),
+        )
+
+    contours = contours_at(threshold)
+    primary = max(contours, key=cv2.contourArea) if contours else None
+    decoded: list[tuple] = []
+    if alternative_threshold is None:
+        if primary is None:
+            return []
+        remaining = [contour for contour in contours if contour is not primary]
+        remaining.sort(key=contour_score, reverse=True)
+        return [
+            decode_contour(contour)
+            for contour in [primary, *remaining][:max(1, int(max_candidates))]
+        ]
+
+    # Mark the legacy component explicitly.  Match-mode routing can then discard every
+    # low-threshold alternative and exactly reproduce the historical input, including a
+    # genuinely empty frame when no component crossed the public 0.5 threshold.
+    if primary is not None:
+        decoded.append((*decode_contour(primary), 1.0))
+    alternatives = contours_at(min(float(alternative_threshold), threshold))
+    alternatives.sort(key=contour_score, reverse=True)
+    for contour in alternatives:
+        candidate = decode_contour(contour)
+        if primary is not None:
+            px, py, _, pw, ph = decoded[0][:5]
+            if abs(candidate[0] - px) <= max(pw, candidate[3]) and abs(candidate[1] - py) <= max(ph, candidate[4]):
+                continue
+        if any(np.hypot(candidate[0] - prior[0], candidate[1] - prior[1]) <= 4.0 * max(scale_x, scale_y)
+               for prior in decoded):
+            continue
+        decoded.append((*candidate, 0.0))
+        if len(decoded) >= max(1, int(max_candidates)):
+            break
+    return decoded
+
+
 def _decode(
     heatmap: np.ndarray, threshold: float, scale_x: float, scale_y: float
 ) -> tuple[float, float, float, float, float] | None:
-    mask = (heatmap > threshold).astype(np.uint8) * 255
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return None
-    contour = max(contours, key=cv2.contourArea)
-    x, y, width, height = cv2.boundingRect(contour)
-    confidence = float(np.mean(heatmap[y : y + height, x : x + width]))
-    return (
-        (x + width / 2.0) * scale_x,
-        (y + height / 2.0) * scale_y,
-        confidence,
-        max(1.0, width * scale_x),
-        max(1.0, height * scale_y),
+    """Compatibility wrapper for callers that require the historic single candidate."""
+    decoded = _decode_candidates(
+        heatmap, threshold, scale_x, scale_y, max_candidates=1,
     )
+    return decoded[0] if decoded else None
 
 
-def _cache_key(video: Path, checkpoint: Path, threshold: float, batch_size: int = 1) -> str:
+def _cache_key(
+    video: Path,
+    checkpoint: Path,
+    threshold: float,
+    batch_size: int = 1,
+    max_candidates: int = 1,
+    alternative_threshold: float | None = None,
+) -> str:
     stat = video.stat()
     identity = (
         f"{stat.st_size}:{stat.st_mtime_ns}:{sha256(checkpoint)}:{threshold}:"
         f"{MODEL_WIDTH}x{MODEL_HEIGHT}:rv3-production-v1"
         f"{'' if batch_size == 1 else f':batch{batch_size}'}"
+        f"{'' if max_candidates == 1 else f':top{max_candidates}'}"
+        f"{'' if alternative_threshold is None else f':alt{alternative_threshold:.3f}'}"
     )
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
 
@@ -168,6 +241,8 @@ def detect_video_candidates(
     device: str = "cuda",
     threshold: float = DEFAULT_THRESHOLD,
     batch_size: int | None = None,
+    max_candidates: int = 1,
+    alternative_threshold: float | None = None,
     progress: ProgressCallback | None = None,
 ) -> list[list[tuple[float, float, float, float, float]]]:
     """Return one candidate row per source frame.
@@ -180,9 +255,10 @@ def detect_video_candidates(
     if batch_size is None:
         batch_size = int(os.environ.get("TENNISVISION_RACKETVISION_BATCH_SIZE", DEFAULT_BATCH_SIZE))
     batch_size = max(1, int(batch_size))
+    max_candidates = max(1, int(max_candidates))
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cache_dir / (
-        f"racketvision_{_cache_key(video, checkpoint, threshold, batch_size)}.pkl"
+        f"racketvision_{_cache_key(video, checkpoint, threshold, batch_size, max_candidates, alternative_threshold)}.pkl"
     )
     if cache_path.exists():
         with cache_path.open("rb") as stream:
@@ -218,8 +294,11 @@ def detect_video_candidates(
             else:
                 heatmaps = model(inputs)
         for heatmap in heatmaps.float().cpu().numpy():
-            decoded = _decode(heatmap, threshold, scale_x, scale_y)
-            candidates.append([decoded] if decoded is not None else [])
+            candidates.append(_decode_candidates(
+                heatmap, threshold, scale_x, scale_y,
+                max_candidates=max_candidates,
+                alternative_threshold=alternative_threshold,
+            ))
         pending_inputs.clear()
         crossed_progress_step = len(candidates) // 100 > completed_before // 100
         if progress is not None and (crossed_progress_step or len(candidates) >= total_frames):

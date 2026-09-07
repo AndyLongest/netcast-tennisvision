@@ -12,9 +12,9 @@ import sys
 import tempfile
 import time
 import urllib.request
-from urllib.parse import unquote, urlsplit
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "assets" / "manifest.json"

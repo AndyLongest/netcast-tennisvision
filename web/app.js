@@ -843,6 +843,7 @@ function applyRealMetrics() {
   const quality = gradeFor(trackRate);
   const anchored = scene.frames.filter((frame) => frame.c === 2).length;
   const extrapolated = scene.frames.filter((frame) => frame.c === 1).length;
+  const playMode = scene.play_mode?.label || '比赛模式';
 
   $('#bounceCount').textContent = scene.bounces.length;
   $('#validBounceText').textContent = `${valid.length} 次界内 · ${out} 次界外`;
@@ -862,7 +863,7 @@ function applyRealMetrics() {
   $('#heatDominant').textContent = dominant;
   $('#heatInRate').textContent = `${Math.round(inRate * 100)}%`;
   $('#averageDepth').textContent = `${averageDepth.toFixed(1)} 米`;
-  $('#verdictText').textContent = `系统连续追踪到 ${trackedFrames.toLocaleString()} 帧球位置，并按回合确认 ${scene.bounces.length} 次落地；界外落点已单独标红。`;
+  $('#verdictText').textContent = `已自动识别为${playMode}。系统连续追踪到 ${trackedFrames.toLocaleString()} 帧球位置，并确认 ${scene.bounces.length} 次落地；界外落点已单独标红。`;
   $('#insightText').textContent = `其中 ${anchored.toLocaleString()} 帧由可靠视觉观测锚定，${extrapolated.toLocaleString()} 帧由时序与物理约束补全；低可信位置不会伪装成确定结果。`;
 }
 

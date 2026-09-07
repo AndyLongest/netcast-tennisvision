@@ -16,6 +16,7 @@ experiments are not runtime fallbacks.
 ```text
 native video
   -> one multi-frame court calibration + per-frame player geometry
+  -> temporal player-count vote (1+1 singles, 2+2 doubles, otherwise training)
   -> frozen RacketVision MS-TrackNetV3 candidates
   -> persistent physical-ball association
   -> court-aware temporal player tracks + sparse OSNet-AIN identity
@@ -125,6 +126,27 @@ the manual timestamp windows. UI-only work must not alter inference or event dat
   a clip whose contact occurred before its first frame uses the opposite-landing-half
   fallback.
 
+## Play-mode routing
+
+Person-box feet are projected into the accepted court coordinate system every fifth frame.
+Counts are aggregated across the whole clip with a 65th-percentile presence vote, so a
+short occlusion does not turn doubles into singles and a rare extra box does not turn
+singles into training. Stable 1+1 is `singles`, stable 2+2 is `doubles`, and every other
+asymmetric or multi-person arrangement is `training`. The selected mode and evidence
+distribution are exported as `scene3d.json.play_mode` and shown in the report conclusion.
+Contact geometry retains the inferred number of active people on each side; this is what
+allows a coach plus two trainees to contribute racket evidence instead of discarding one
+trainee under the old one-player-per-half assumption.
+
+Training mode also selects a separate candidate/lifecycle policy without changing the
+validated singles or doubles path. RacketVision keeps the historical largest heatmap
+component at its public 0.5 threshold, plus at most seven spatially distinct alternatives
+down to 0.30. Long-lived fixed components form a loose-ball map and are removed before
+association. A training feed still needs three temporally reachable observations to be
+born, but its minimum image displacement is perspective-tolerant and a dead feed releases
+the active state after 0.45 seconds so the next ball can start. Match mode discards every
+alternative and retains its original birth, occlusion and fragment-join parameters.
+
 ## Fixed-camera court policy
 
 The court is calibrated once from a clean plate assembled across multiple sampled frames.
@@ -152,3 +174,9 @@ multi-frame support, temporal consensus and paint-fit error produce confidence >
 Below that threshold the job pauses and asks for four points in the fixed order near-left,
 near-right, far-right, far-left. The submitted quadrilateral passes the same geometry and
 homography validation as automatic proposals before analysis resumes.
+
+For a fixed-camera job, an accepted automatic or manual quadrilateral is authoritative for
+every decoded frame. Per-frame paint contrast may control which line fragments are drawn,
+but it cannot revoke the court coordinate system or suppress ball tracking. The rounded
+four-corner geometry is part of the Pass-A cache signature, so a corrected calibration
+never reuses court metadata produced for different corners.

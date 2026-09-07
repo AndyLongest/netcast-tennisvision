@@ -62,6 +62,7 @@ def track_ball_persistent(
     search_confidences: tuple[float, ...] = (0.0, 0.0, 0.0, 0.0, 0.0),
     search_score_slack: float = 0.0,
     speed_radius_gain: float = 0.65,
+    play_mode: str = "match",
 ) -> tuple[list[dict[str, Any]], TrackerDiagnostics]:
     """Track exactly one persistent physical ball through a native-rate clip.
 
@@ -72,6 +73,9 @@ def track_ball_persistent(
     """
     if not isfinite(fps) or fps <= 0:
         raise ValueError(f"persistent tracker requires a positive native fps, got {fps!r}")
+    if play_mode not in {"match", "singles", "doubles", "training"}:
+        raise ValueError(f"unsupported play mode: {play_mode!r}")
+    training_mode = play_mode == "training"
 
     width, height = frame_size
     transition = np.array(
@@ -95,10 +99,17 @@ def track_ball_persistent(
     # Keep the online hypothesis conservative.  Longer gaps are handled below by an
     # offline, future-confirmed fragment join; making the live gate stay wide for too long
     # lets an unrelated bright object hijack the only-ball state.
-    max_occlusion = max(8, int(round(0.80 * fps)))
-    max_bridge_occlusion = max(max_occlusion, int(round(1.20 * fps)))
-    birth_window = max(4, int(round(0.17 * fps)))
+    # Training feeds are short, independent episodes.  A dead feed must release the
+    # single active state quickly enough for the coach's next ball to be born.  Match
+    # footage retains the longer occlusion tolerance that was validated on the demo.
+    max_occlusion = max(6, int(round((0.45 if training_mode else 0.80) * fps)))
+    max_bridge_occlusion = max(
+        max_occlusion, int(round((0.50 if training_mode else 1.20) * fps))
+    )
+    birth_window = max(4, int(round((0.25 if training_mode else 0.17) * fps)))
     birth_hits = 3
+    birth_span = min_track_span * (0.45 if training_mode else 1.0)
+    hypothesis_beam = 36 if training_mode else 12
     net_grace = max(4, int(round(0.20 * fps)))
     net_band = max(10.0 * spatial, 0.025 * height)
     exit_margin = max(12.0 * spatial, 0.025 * min(width, height))
@@ -536,9 +547,9 @@ def track_ball_persistent(
                     rejected_teleports += 1
         hypotheses = [h for h in extended if frame - h["obs"][0][0] < birth_window]
         hypotheses.sort(key=lambda h: (len(h["obs"]), h["score"]), reverse=True)
-        hypotheses = hypotheses[:12]
+        hypotheses = hypotheses[:hypothesis_beam]
         confirmed = next((h for h in hypotheses if len(h["obs"]) >= birth_hits and
-                          np.linalg.norm(h["obs"][-1][1] - h["obs"][0][1]) >= min_track_span), None)
+                          np.linalg.norm(h["obs"][-1][1] - h["obs"][0][1]) >= birth_span), None)
         if confirmed is None:
             continue
         obs = {f: (float(p[0]), float(p[1]), float(conf)) for f, p, conf in confirmed["obs"]}

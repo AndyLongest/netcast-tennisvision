@@ -40,6 +40,45 @@ def test_single_detection_cannot_create_a_ball():
     assert diagnostics.confirmed_births == 0
 
 
+def test_training_mode_can_confirm_a_slow_perspective_feed_without_weakening_match_birth():
+    observations = {
+        0: [_candidate(100, 100)],
+        1: [_candidate(106, 100)],
+        2: [_candidate(112, 100)],
+    }
+    match_frames = _frames(6, observations)
+    training_frames = _frames(6, observations)
+
+    match_segments, _ = track_ball_persistent(
+        match_frames, fps=30.0, spatial=1.0, speed_scale=1.0,
+        frame_size=(640, 360), min_track_span=25.0, play_mode="match",
+    )
+    training_segments, _ = track_ball_persistent(
+        training_frames, fps=30.0, spatial=1.0, speed_scale=1.0,
+        frame_size=(640, 360), min_track_span=25.0, play_mode="training",
+    )
+
+    assert match_segments == []
+    assert len(training_segments) == 1
+    assert training_frames[2]["ball_seen"] is True
+
+
+def test_training_mode_releases_a_dead_feed_before_the_next_ball_is_born():
+    observations = {
+        0: [_candidate(80, 100)], 1: [_candidate(90, 100)], 2: [_candidate(100, 100)],
+        20: [_candidate(400, 140)], 21: [_candidate(410, 140)], 22: [_candidate(420, 140)],
+    }
+    frames = _frames(28, observations)
+    segments, diagnostics = track_ball_persistent(
+        frames, fps=30.0, spatial=1.0, speed_scale=1.0,
+        frame_size=(640, 360), hard_cap=80.0, play_mode="training",
+    )
+
+    assert len(segments) == 2
+    assert diagnostics.confirmed_births == 2
+    assert frames[2]["ball_track_id"] != frames[22]["ball_track_id"]
+
+
 def test_ball_survives_short_occlusion_and_rejects_teleport():
     observations = {}
     for frame in list(range(0, 6)) + list(range(10, 16)):

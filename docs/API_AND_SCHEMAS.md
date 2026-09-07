@@ -44,6 +44,7 @@ Top-level fields currently include:
 - `frames`: per-frame compact 3D/display state;
 - `bounces`: confirmed touchdown events;
 - `hits`: racket-contact events;
+- `play_mode`: temporal near/far head-count decision, confidence and vote distribution;
 - `player_identities`: stable A/B display colours;
 - `player_identity_metrics`: auditable OSNet-AIN sampling and side-change diagnostics;
 - court/player/camera fields used by the self-contained viewer.
