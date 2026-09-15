@@ -1,2 +1,16 @@
 # PPIO Async Serverless implements the RunPod worker protocol.
+# Cloud worker runtime for the Python 3.11 CUDA base image.
+# Keep the detector versions aligned with requirements.txt. NumPy and SciPy use
+# their final Python 3.11-compatible releases because their newest releases
+# require Python 3.12+.
+ultralytics==8.4.120
+opencv-python-headless==5.0.0.93
+huggingface_hub==1.27.0
+mmengine==0.10.7
+matplotlib==3.11.1
+numpy==2.4.6
+scipy==1.17.1
+scikit-learn==1.9.0
+torchreid==0.2.5
+tensorboard==2.21.0
 runpod==1.12.0

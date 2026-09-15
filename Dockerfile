@@ -13,7 +13,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY requirements.txt requirements-cloud.txt pyproject.toml ./
 COPY src ./src
-RUN python -m pip install --no-cache-dir -r requirements.txt -r requirements-cloud.txt \
+RUN python -m pip install --no-cache-dir -r requirements-cloud.txt \
     && python -m pip install --no-cache-dir --no-deps .
 
 COPY . .
