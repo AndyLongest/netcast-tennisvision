@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ESSENTIAL = (
     "AGENTS.md",
     "README.md",
+    "docs/README.md",
     "docs/HANDOFF.md",
     "docs/CURRENT_ARCHITECTURE.md",
     "docs/PROJECT_STRUCTURE.md",
@@ -28,6 +29,7 @@ ESSENTIAL = (
     "tests/fixtures/production_manifest.json",
     "web/index.html",
     "src/netcast_tennisvision/api/server.py",
+    "src/netcast_tennisvision/README.md",
     "src/netcast_tennisvision/pipeline/runner.py",
     "src/netcast_tennisvision/vision/racketvision.py",
     "src/netcast_tennisvision/tracking/world_tracker.py",
@@ -38,6 +40,7 @@ SECRET_PATTERN = re.compile(
     r"(?:github_pat_[A-Za-z0-9_]{20,}|hf_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}|"
     r"-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----)"
 )
+MARKDOWN_LINK_PATTERN = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
 TEXT_SUFFIXES = {".py", ".js", ".css", ".html", ".json", ".md", ".ps1", ".toml", ".yml", ".yaml"}
 EXCLUDED_PARTS = {".git", ".venv", "data", "models", "outputs", "__pycache__"}
 
@@ -71,6 +74,25 @@ def source_files() -> list[Path]:
         and not EXCLUDED_PARTS.intersection(path.relative_to(ROOT).parts)
         and not ("docs" in path.parts and path.suffix.lower() == ".log")
     ]
+
+
+def check_markdown_links(audit: Audit) -> None:
+    broken: list[str] = []
+    for path in source_files():
+        if path.suffix.lower() != ".md":
+            continue
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for raw_target in MARKDOWN_LINK_PATTERN.findall(line):
+                target = raw_target.strip().strip("<>").split("#", 1)[0]
+                if not target or "://" in target or target.startswith(("mailto:", "#")):
+                    continue
+                destination = (path.parent / target).resolve()
+                if not destination.exists():
+                    broken.append(f"{path.relative_to(ROOT)}:{line_number} -> {target}")
+    audit.require(
+        not broken,
+        f"local documentation links resolve ({', '.join(broken) if broken else 'clean'})",
+    )
 
 
 def check_demo(audit: Audit) -> None:
@@ -135,6 +157,7 @@ def main() -> int:
         if re.search(r"(?i)\b[A-Z]:\\(?:Users|Built|Alpha|anaconda)\\", text):
             absolute_hits.append(str(path.relative_to(ROOT)))
     audit.require(not absolute_hits, f"no workstation-specific absolute paths ({', '.join(absolute_hits) or 'clean'})")
+    check_markdown_links(audit)
 
     oversized = [
         str(path.relative_to(ROOT)) for path in ROOT.rglob("*")

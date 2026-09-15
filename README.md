@@ -141,18 +141,17 @@ candidate.
 
 ## Documentation
 
+- [Canonical documentation map](docs/README.md)
 - [New engineer/Agent handoff](docs/HANDOFF.md)
 - [Current architecture and algorithm rules](docs/CURRENT_ARCHITECTURE.md)
-- [End-to-end acceleration deep research](docs/ACCELERATION_DEEP_RESEARCH.md)
-- [Native-rate acceleration experiment](docs/PERFORMANCE_EXPERIMENT_2026-09-15.md)
 - [Repository structure and dependency rules](docs/PROJECT_STRUCTURE.md)
 - [Developer handoff guide](docs/DEVELOPMENT.md)
 - [Prioritized next steps](docs/NEXT_STEPS.md)
 - [Local API and report schemas](docs/API_AND_SCHEMAS.md)
-- [PPIO server benchmark and deployment state](docs/PPIO_BENCHMARK_2026-09-15.md)
 - [Publication blockers](docs/PUBLICATION_CHECKLIST.md)
 - [Local research library and implementation mapping](docs/references/README.md)
 - [Runtime output ownership](docs/OUTPUTS.md)
+- [Benchmarks and rejected alternatives](docs/experiments/README.md)
 - [Historical experiments](docs/history/)
 
 ## Repository layout

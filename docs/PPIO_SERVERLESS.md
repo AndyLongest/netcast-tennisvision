@@ -6,7 +6,7 @@ remote uploads are added to the product. It deliberately accepts only the bundle
 from object-storage transfer time.
 
 The first completed server measurement is recorded in
-[`PPIO_BENCHMARK_2026-09-15.md`](PPIO_BENCHMARK_2026-09-15.md). Use its first-processing
+[`experiments/PPIO_BENCHMARK_2026-09-15.md`](experiments/PPIO_BENCHMARK_2026-09-15.md). Use its first-processing
 number for capacity planning; its faster exact-video repeat intentionally includes
 persisted caches.
 
@@ -27,7 +27,7 @@ Credentials -> Image Registry Upload Credentials.
 
 Push an annotated `production-v*` tag to build a production release. The workflow uses
 `Dockerfile.release` to layer current source and web assets over the already-audited
-private `production-v1` runtime, validates that all three frozen production checkpoints
+private `production-v1` runtime, validates that all four frozen production checkpoints
 are reachable, and pushes the versioned tag only to the account's private PPIO registry.
 This avoids rebuilding CUDA, Python dependencies, and model weights for every code-only
 release. The full `Dockerfile` remains the reproducible path for intentionally rebuilding

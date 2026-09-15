@@ -94,7 +94,7 @@ observations on the 1737-frame sample, with 29 confirmed bounces and 35 racket h
 These are preservation counters, not independent accuracy claims.
 
 The optional quasi-realtime research path and its rejected A/B variants are documented
-in `docs/QUASI_REALTIME_EXPERIMENT.md`. It is disabled by default because simple player
+in `docs/experiments/QUASI_REALTIME_EXPERIMENT.md`. It is disabled by default because simple player
 or court frame skipping changed contact classification.
 
 ## 6. Tests

@@ -13,6 +13,10 @@
 
 ## Unreleased — handoff preparation
 
+- Added one canonical documentation index, a close-to-code package ownership map and a
+  complete developer-tool catalog; dated benchmarks now live under `docs/experiments/`.
+- The handoff gate now rejects broken local documentation links and missing Agent entry
+  points before a repository can be transferred.
 - Migrated all production Python code into the conventional
   `src/netcast_tennisvision/` package, grouped by API, pipeline, vision, tracking and
   event ownership; the repository root no longer contains Python modules.
@@ -25,7 +29,9 @@
 - Separated tracking, contact, landing, tennis-order and rendering ownership.
 - Added fixed-camera calibration reuse and equivalent four-frame detector batching.
 - Added resumable single-job browser analysis.
-- Promoted the validated demo to 28 bounces and 32 racket hits.
+- Promoted the current validated demo to 29 bounces and 35 racket hits after the
+  physically supported rejected-fragment recall pass; the earlier 28/32 counters above
+  remain historical migration evidence.
 - Added checksummed asset management, reproducible setup scaffolding, fixtures, CI and
   engineering handoff documentation.
 

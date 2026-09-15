@@ -14,6 +14,7 @@ RUN set -eux; \
     fi; \
     test -f /app/models/racketvision_balltrack_state_v1.pt; \
     test -f /app/models/bounce_classifier_production_v1.pkl; \
+    test -f /app/models/yolo11n-seg.pt; \
     test -f /app/models/osnet_ain_x1_0_msmt17_256x128_amsgrad_ep50_lr0.0015_coslr_b64_fb10_softmax_labsmth_flip_jitter.pth; \
     python -c "import netcast_tennisvision; import netcast_tennisvision.api.server"
 

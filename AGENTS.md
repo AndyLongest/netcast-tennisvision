@@ -3,13 +3,14 @@
 Read these files, in order, before changing runtime behavior:
 
 1. `README.md`
-2. `docs/HANDOFF.md`
-3. `docs/CURRENT_ARCHITECTURE.md`
-4. `docs/PROJECT_STRUCTURE.md`
-5. `docs/DEVELOPMENT.md`
-6. `docs/NEXT_STEPS.md`
-7. `docs/RACKETVISION_PRODUCTION.md`
-8. `assets/MODELS.md`
+2. `docs/README.md`
+3. `docs/HANDOFF.md`
+4. `docs/CURRENT_ARCHITECTURE.md`
+
+Then read only the task-specific contract routed by `docs/README.md`. In particular,
+use `docs/PROJECT_STRUCTURE.md` for file placement, `docs/DEVELOPMENT.md` before a code
+change, `docs/RACKETVISION_PRODUCTION.md` for ball inference, and `assets/MODELS.md` for
+weights. Do not load the experiment or history archives unless the task needs that evidence.
 
 Do not ask the product owner to restate information already recorded in those files.
 
@@ -39,6 +40,10 @@ Do not ask the product owner to restate information already recorded in those fi
 - Pipeline orchestration/rendering: `notebooks/tennis_detection.ipynb`
 - Local app/API: `src/netcast_tennisvision/api/`, `web/`
 - Regression tests: `tests/`
+
+`src/netcast_tennisvision/README.md` is the close-to-code responsibility map. Experimental
+evidence belongs under `docs/experiments/`; retired behavior belongs under `docs/history/`.
+Neither directory defines a production fallback.
 
 ## Required checks
 

@@ -1,26 +1,46 @@
 # Developer tools
 
-Utilities in this directory are optional diagnostics and are not imported by the product
-pipeline. `render_confidence_video.py` renders a review video from existing tracking
-metadata; it does not run detection or change algorithm outputs.
+Nothing in this directory is imported by production code. Scripts are kept flat so every
+command can be run from the repository root without path or import surprises; this index
+provides the logical grouping. Generated files belong under `outputs/evaluations/` or
+`outputs/benchmarks/`, never beside source code.
 
-Handoff/release utilities:
+## Installation and release gates
 
-- `install_assets.py`: installs only manifest-listed assets and rejects checksum mismatch;
-- `verify_install.py`: checks Python, libraries, FFmpeg, models and frozen manifest;
-- `install_assets.py`: downloads/converts/rebuilds the pinned runtime models and verifies
-  every final SHA-256; the root `download_models.ps1` is its operator-friendly entrypoint;
-- `check_e2e_baseline.py`: proves the current demo outputs remain byte-identical and the
-  warm-cache runtime stays within the accepted 10% performance envelope;
-- `quarantine_legacy_workspace.py`: inventories and reversibly isolates parent-workspace
-  material without touching the canonical repository or the outer active Git metadata;
-- `build_demo_assets.py`: regenerates `web/demo-scene.js` from the frozen JSON report;
-- `release_check.py`: CI, handoff and public-publication repository gates.
+| Script | Purpose |
+|---|---|
+| `install_assets.py` | Download/rebuild only manifest-listed models and verify SHA-256 |
+| `verify_install.py` | Audit Python, libraries, FFmpeg, models and the frozen manifest |
+| `release_check.py` | Run CI, handoff or public-publication repository gates |
+| `check_e2e_baseline.py` | Compare frozen demo outputs and the accepted runtime envelope |
+| `build_demo_assets.py` | Regenerate `web/demo-scene.js` from the frozen demo report |
+| `quarantine_legacy_workspace.py` | Reversibly isolate legacy parent-workspace material |
 
-- `diagnose_court_registration.py`: court-only failure diagnosis.
-- `evaluate_racketvision.py`: detector-only blind evaluation using the production weight.
-- `benchmark_production_batching.py`: verifies batched inference equivalence.
-- `audit_landing_candidates.py`: inspects landing evidence without changing outputs.
+The operator-facing wrappers are `setup.ps1`, `download_models.ps1` and `run_ui.ps1` in
+the repository root.
 
-Generated files belong under `outputs/evaluations/` or `outputs/benchmarks/`, never beside
-the source code.
+## Diagnostics and review output
+
+| Script | Purpose |
+|---|---|
+| `diagnose_court_registration.py` | Run court calibration without loading ball/person models |
+| `audit_landing_candidates.py` | Inspect landing evidence without changing outputs |
+| `evaluate_racketvision.py` | Evaluate detector candidates with the frozen public weight |
+| `render_confidence_video.py` | Render observation/confidence overlays from existing metadata |
+| `experiment_player_identity.py` | Produce the isolated player A/B identity review artifact |
+| `jupyter_terminal_exec.py` | Compatibility helper for controlled notebook execution |
+
+## Benchmarks
+
+| Script | Isolated variable |
+|---|---|
+| `benchmark_background_sampling.py` | Parallel deterministic background construction |
+| `benchmark_detector_parallelism.py` | Concurrent ball/person model execution |
+| `benchmark_person_prefetch.py` | Person-result preparation overlap |
+| `benchmark_pipeline_variant.py` | End-to-end feature-flag combinations |
+| `benchmark_production_batching.py` | Production ball-batch equivalence |
+| `benchmark_racketvision_batch.py` | Detector-only batch sizes |
+
+Benchmark scripts may measure rejected variants. A script's presence does not mean its
+variant is enabled. Production decisions are recorded in
+`docs/CURRENT_ARCHITECTURE.md`; detailed evidence belongs in `docs/experiments/`.

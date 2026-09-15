@@ -205,8 +205,8 @@ network interruption from retransmitting an entire match.
 Production cloud releases use `Dockerfile.release`: a thin code overlay on the audited
 `production-v1` ML runtime. The legacy image stores frozen weights in
 `/opt/netcast/models`; the release maps that directory to the canonical `/app/models`
-path and refuses to publish unless the ball, bounce, and player-identity checkpoints are
-all present. The relay currently pins `production-v7`. Short PPIO control-plane TLS
+path and refuses to publish unless the ball, bounce, player-segmentation and
+player-identity checkpoints are all present. The relay currently pins `production-v7`. Short PPIO control-plane TLS
 disconnects while an existing instance starts are retried until the startup deadline;
 instance creation itself is never blindly retried because that could allocate two GPUs.
 
@@ -259,7 +259,7 @@ The integrated notebook's person portion of Pass A improved more modestly, from 
 structured report also remained byte-identical to the serial control. Set
 `TENNISVISION_PERSON_PREFETCH=0` for an immediate rollback. End-to-end wall time remains
 noisy; timings and rejected alternatives are recorded in
-`docs/PERFORMANCE_EXPERIMENT_2026-09-15.md`.
+`docs/experiments/PERFORMANCE_EXPERIMENT_2026-09-15.md`.
 
 RacketVision's deterministic 180-frame median background is sampled by four independent
 decoder instances, then restored to source-frame order before the median. On `demo` this
