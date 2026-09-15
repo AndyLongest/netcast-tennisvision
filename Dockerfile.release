@@ -10,9 +10,7 @@ ENV PYTHONPATH=/app/src
 
 RUN set -eux; \
     if [ ! -d /app/models ]; then \
-      checkpoint="$(find / -type f -name racketvision_balltrack_state_v1.pt -print -quit 2>/dev/null)"; \
-      test -n "$checkpoint"; \
-      ln -s "$(dirname "$checkpoint")" /app/models; \
+      ln -s /opt/netcast/models /app/models; \
     fi; \
     test -f /app/models/racketvision_balltrack_state_v1.pt; \
     test -f /app/models/bounce_classifier_production_v1.pkl; \
