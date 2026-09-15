@@ -11,6 +11,6 @@ COPY pyproject.toml README.md ./
 
 ENV PYTHONPATH=/app/src
 
-RUN python tools/verify_install.py
+RUN python -c "import netcast_tennisvision; import netcast_tennisvision.api.server"
 
 CMD ["python", "-m", "netcast_tennisvision.cloud.worker"]
