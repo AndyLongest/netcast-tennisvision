@@ -1,4 +1,4 @@
-FROM pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
+FROM image.ppinfra.com/prod-gpucloudpublic/pytorch:2.7.1-cuda12.8
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
