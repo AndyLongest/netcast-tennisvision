@@ -44,6 +44,11 @@ are written to `data/outputs/`:
 - `scene3d.json` — machine-readable frame and event data;
 - `rally3d.html` — self-contained interactive 3D viewer.
 
+When the Windows user environment contains `TENNISVISION_CLOUD_URL` and
+`TENNISVISION_CLOUD_TOKEN`, `run_ui.ps1` starts a trusted local relay and all uploaded
+video inference runs on the configured GPU server. The browser never receives the cloud
+secret. The bundled example remains a local static asset.
+
 For development:
 
 ```powershell
@@ -142,6 +147,7 @@ candidate.
 - [Developer handoff guide](docs/DEVELOPMENT.md)
 - [Prioritized next steps](docs/NEXT_STEPS.md)
 - [Local API and report schemas](docs/API_AND_SCHEMAS.md)
+- [PPIO server benchmark and deployment state](docs/PPIO_BENCHMARK_2026-09-15.md)
 - [Publication blockers](docs/PUBLICATION_CHECKLIST.md)
 - [Local research library and implementation mapping](docs/references/README.md)
 - [Runtime output ownership](docs/OUTPUTS.md)

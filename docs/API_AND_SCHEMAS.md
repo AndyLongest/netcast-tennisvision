@@ -1,7 +1,14 @@
-# Local API and report contracts
+# API and report contracts
 
-The server listens on `127.0.0.1:4173`. It is a local desktop service, not an
-internet-facing multi-user API.
+The desktop relay listens on `127.0.0.1:4173`. With no cloud configuration it runs the
+pipeline locally. When `TENNISVISION_CLOUD_URL` and `TENNISVISION_CLOUD_TOKEN` are set,
+the same browser contract streams `/api/*` and `/data/*` to a GPU server. The bearer
+token stays in the Python relay and is never sent to browser JavaScript.
+
+The GPU server sets `TENNISVISION_HOST=0.0.0.0`,
+`TENNISVISION_EXECUTION_TARGET=cloud`, and `TENNISVISION_CLOUD_SHARED_SECRET`. Direct
+requests without the matching bearer secret receive `401`. `GET /api/status` exposes
+`execution_target` so operations and tests can prove where inference is running.
 
 ## HTTP endpoints
 

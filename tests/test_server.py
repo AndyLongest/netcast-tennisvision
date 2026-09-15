@@ -34,6 +34,24 @@ def test_status_keeps_job_identity_across_pipeline_progress_updates(tmp_path, mo
     assert payload["progress"] == 54
     assert payload["job_id"] == "job-1"
     assert payload["filename"] == "match.mp4"
+    assert payload["execution_target"] == "local"
+
+
+def test_cloud_bearer_secret_is_required(monkeypatch):
+    class Request:
+        headers = {"Authorization": "Bearer wrong"}
+        response = None
+
+        def send_json(self, payload, status):
+            self.response = (payload, status)
+
+    monkeypatch.setattr(server, "CLOUD_SHARED_SECRET", "relay-secret")
+    request = Request()
+
+    assert not server.Handler.cloud_request_authorized(request)
+    assert request.response[1] == 401
+    request.headers["Authorization"] = "Bearer relay-secret"
+    assert server.Handler.cloud_request_authorized(request)
 
 
 def test_running_job_is_resumable_only_for_the_same_video(tmp_path, monkeypatch):

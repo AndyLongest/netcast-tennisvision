@@ -671,9 +671,9 @@ async function runBackendAnalysis() {
   const token = ++backendRunToken;
   try {
     $('#processingMessage').textContent = '视频已收到，正在准备分析…';
-    $('#timeHint').textContent = '比赛数据只在当前电脑上处理';
+    $('#timeHint').textContent = '比赛视频将安全上传至 GPU 服务器分析';
     const health = await fetch(apiUrl('/api/status'), { cache: 'no-store' });
-    if (!health.ok) throw new Error('本机分析服务尚未就绪，请重新打开 Netcast TennisVision');
+    if (!health.ok) throw new Error('云端分析服务尚未就绪，请稍后重试');
     const current = await health.json();
     const fingerprint = await videoFingerprint(state.file);
 
@@ -728,7 +728,7 @@ async function runBackendAnalysis() {
     console.error(error);
     setView('welcome');
     const message = error instanceof TypeError && /fetch/i.test(error.message)
-      ? '无法连接本机分析服务。请关闭旧页面，再用桌面启动程序重新打开 Netcast TennisVision'
+      ? '无法连接云端分析服务，请稍后重试'
       : error.message;
     toast(`分析未完成：${message}`);
   }

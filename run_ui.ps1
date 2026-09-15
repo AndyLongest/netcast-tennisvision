@@ -1,11 +1,20 @@
 $python = "$PSScriptRoot\.venv\Scripts\python.exe"
+$cloudUrl = [Environment]::GetEnvironmentVariable("TENNISVISION_CLOUD_URL", "User")
+$cloudToken = [Environment]::GetEnvironmentVariable("TENNISVISION_CLOUD_TOKEN", "User")
+if ($cloudUrl) {
+    $env:TENNISVISION_CLOUD_URL = $cloudUrl
+    $env:TENNISVISION_CLOUD_TOKEN = $cloudToken
+}
 
 function Test-NetcastTennisVisionServer([int]$CandidatePort) {
     try {
         $candidateBaseUrl = "http://127.0.0.1:$CandidatePort"
         $statusResponse = Invoke-WebRequest -UseBasicParsing "$candidateBaseUrl/api/status" -TimeoutSec 1
         $pageResponse = Invoke-WebRequest -UseBasicParsing "$candidateBaseUrl/web/" -TimeoutSec 1
-        return $statusResponse.StatusCode -eq 200 -and $pageResponse.StatusCode -eq 200
+        $targetHeader = @($statusResponse.Headers["X-Netcast-Execution-Target"]) -join ","
+        $isCloudRelay = $targetHeader -match "(^|,)cloud(,|$)"
+        return $statusResponse.StatusCode -eq 200 -and $pageResponse.StatusCode -eq 200 `
+            -and $isCloudRelay -eq [bool]$cloudUrl
     }
     catch {
         return $false

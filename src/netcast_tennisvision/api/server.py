@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
+import http.client
 import json
 import math
 import os
@@ -31,6 +33,10 @@ CALIBRATION_RESPONSE = DATA / "court_calibration_response.json"
 job_lock = threading.Lock()
 job_process: subprocess.Popen[bytes] | None = None
 ACTIVE_STATES = {"queued", "running", "needs_court_calibration", "report_ready"}
+CLOUD_API_URL = os.environ.get("TENNISVISION_CLOUD_URL", "").strip().rstrip("/")
+CLOUD_API_TOKEN = os.environ.get("TENNISVISION_CLOUD_TOKEN", "").strip()
+CLOUD_TIMEOUT_SECONDS = float(os.environ.get("TENNISVISION_CLOUD_TIMEOUT", "3600"))
+CLOUD_SHARED_SECRET = os.environ.get("TENNISVISION_CLOUD_SHARED_SECRET", "").strip()
 
 
 def read_json(path: Path) -> dict[str, object]:
@@ -54,6 +60,9 @@ def status_payload() -> dict[str, object]:
     # separate file and merge it into every response so a refreshed browser can reattach.
     for key, value in read_json(CURRENT_JOB).items():
         status.setdefault(key, value)
+    status.setdefault(
+        "execution_target", os.environ.get("TENNISVISION_EXECUTION_TARGET", "local")
+    )
     return status
 
 
@@ -167,6 +176,95 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_header("Accept-Ranges", "bytes")
         super().end_headers()
 
+    def cloud_request_authorized(self) -> bool:
+        """Protect the public GPU port with a relay-only bearer secret."""
+        if not CLOUD_SHARED_SECRET:
+            return True
+        expected = f"Bearer {CLOUD_SHARED_SECRET}"
+        provided = self.headers.get("Authorization", "")
+        if hmac.compare_digest(provided, expected):
+            return True
+        self.send_json({"error": "云端访问未授权"}, HTTPStatus.UNAUTHORIZED)
+        return False
+
+    def proxy_cloud_request(self, method: str) -> None:
+        """Stream API and generated artifacts through the trusted local relay."""
+        parsed = urlparse(CLOUD_API_URL)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            self.send_json(
+                {"error": "云端分析地址配置无效", "code": "cloud_configuration_error"},
+                HTTPStatus.SERVICE_UNAVAILABLE,
+            )
+            return
+        connection_class = (
+            http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+        )
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        request = urlparse(self.path)
+        target = f"{parsed.path.rstrip('/')}{request.path}"
+        if request.query:
+            target += f"?{request.query}"
+        connection = connection_class(parsed.hostname, port, timeout=CLOUD_TIMEOUT_SECONDS)
+        response_started = False
+        try:
+            connection.putrequest(method, target)
+            for name in (
+                "Content-Type",
+                "Content-Length",
+                "Range",
+                "X-Filename",
+                "X-Video-Fingerprint",
+                "X-Display-Correction",
+                "X-Display-Corners",
+            ):
+                value = self.headers.get(name)
+                if value:
+                    connection.putheader(name, value)
+            if CLOUD_API_TOKEN:
+                connection.putheader("Authorization", f"Bearer {CLOUD_API_TOKEN}")
+            connection.endheaders()
+            if method == "POST":
+                remaining = int(self.headers.get("Content-Length", "0"))
+                while remaining:
+                    chunk = self.rfile.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        raise ConnectionError("浏览器上传提前中断")
+                    connection.send(chunk)
+                    remaining -= len(chunk)
+            response = connection.getresponse()
+            self.send_response(response.status, response.reason)
+            for name in (
+                "Content-Type",
+                "Content-Length",
+                "Content-Range",
+                "Accept-Ranges",
+                "Last-Modified",
+                "Cache-Control",
+            ):
+                value = response.getheader(name)
+                if value:
+                    self.send_header(name, value)
+            self.send_header(
+                "Access-Control-Allow-Origin",
+                "null" if self.headers.get("Origin") == "null" else "http://127.0.0.1:4173",
+            )
+            self.send_header("X-Netcast-Execution-Target", "cloud")
+            self.end_headers()
+            response_started = True
+            while chunk := response.read(1024 * 1024):
+                self.wfile.write(chunk)
+        except (OSError, TimeoutError, http.client.HTTPException, ValueError) as exc:
+            if not response_started and not self.wfile.closed:
+                try:
+                    self.send_json(
+                        {"error": f"无法连接云端分析服务：{exc}", "code": "cloud_unavailable"},
+                        HTTPStatus.BAD_GATEWAY,
+                    )
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+        finally:
+            connection.close()
+
     def send_video_range(self, path: Path, range_header: str) -> None:
         """Serve one HTTP byte range so large analysis videos start immediately."""
         size = path.stat().st_size
@@ -226,7 +324,15 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:
-        if urlparse(self.path).path == "/api/status":
+        request_path = urlparse(self.path).path
+        if not self.cloud_request_authorized():
+            return
+        if CLOUD_API_URL and (
+            request_path.startswith("/api/") or request_path.startswith("/data/")
+        ):
+            self.proxy_cloud_request("GET")
+            return
+        if request_path == "/api/status":
             self.send_json(status_payload())
             return
         range_header = self.headers.get("Range")
@@ -240,6 +346,11 @@ class Handler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:
         global job_process
         request_path = urlparse(self.path).path
+        if not self.cloud_request_authorized():
+            return
+        if CLOUD_API_URL and request_path in {"/api/analyze", "/api/court-calibration"}:
+            self.proxy_cloud_request("POST")
+            return
         if request_path == "/api/court-calibration":
             self.save_court_calibration()
             return
@@ -423,8 +534,9 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=int(os.environ.get("TENNISVISION_PORT", "4173")))
     args = parser.parse_args()
     port = args.port
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    print(f"Netcast TennisVision: http://127.0.0.1:{port}/web/", flush=True)
+    host = os.environ.get("TENNISVISION_HOST", "127.0.0.1")
+    server = ThreadingHTTPServer((host, port), Handler)
+    print(f"Netcast TennisVision: http://{host}:{port}/web/", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
