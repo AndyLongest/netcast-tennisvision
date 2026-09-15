@@ -45,3 +45,7 @@ counts, and output hashes. It does not send the generated video through the 4 Mi
 API response. Object storage and arbitrary uploads belong to phase two, after speed and
 regression evidence pass review.
 
+If PPIO's Async gateway cannot register a newly created endpoint, the same benchmark can
+run as a Sync HTTP endpoint on port 8000. Start
+`python -m netcast_tennisvision.cloud.http_worker`, use `/health` for health checks, and
+POST the inner input object to `/benchmark`. This changes only transport, not analysis.
