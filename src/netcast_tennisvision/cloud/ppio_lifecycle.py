@@ -164,7 +164,7 @@ class PPIOJobManager:
             "envs": [{"key": "TENNISVISION_CLOUD_SHARED_SECRET", "value": self.shared_secret}],
             "tools": [],
             "command": (
-                "bash -lc 'cd /opt/netcast && "
+                "bash -lc 'cd /app && "
                 "mkdir -p data/cache data/outputs && "
                 "find data/cache data/outputs -mindepth 1 -maxdepth 1 "
                 "-exec rm -rf -- {} + && "
@@ -173,7 +173,7 @@ class PPIOJobManager:
                 "exec timeout --signal=TERM 7200 env "
                 "TENNISVISION_HOST=0.0.0.0 "
                 "TENNISVISION_PORT=8000 TENNISVISION_EXECUTION_TARGET=cloud "
-                "PYTHONPATH=/opt/netcast/src MPLBACKEND=Agg "
+                "PYTHONPATH=/app/src MPLBACKEND=Agg "
                 "python -m netcast_tennisvision.api.server --port 8000'"
             ),
             "entrypoint": "",
