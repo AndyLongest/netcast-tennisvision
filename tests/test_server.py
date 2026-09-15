@@ -52,6 +52,20 @@ def test_running_job_is_resumable_only_for_the_same_video(tmp_path, monkeypatch)
     assert server.resumable_job(None) is None
 
 
+def test_report_ready_job_remains_resumable_while_video_renders(tmp_path, monkeypatch):
+    status_path = tmp_path / "job_status.json"
+    current_job_path = tmp_path / "current_job.json"
+    status_path.write_text(json.dumps({"state": "report_ready", "progress": 96}), encoding="utf-8")
+    current_job_path.write_text(json.dumps({
+        "job_id": "job-report",
+        "video_fingerprint": "sha256-sample:report",
+    }), encoding="utf-8")
+    monkeypatch.setattr(server, "STATUS", status_path)
+    monkeypatch.setattr(server, "CURRENT_JOB", current_job_path)
+
+    assert server.resumable_job("sha256-sample:report")["job_id"] == "job-report"
+
+
 def test_video_fingerprint_uses_content_and_size(tmp_path):
     first = tmp_path / "first.mp4"
     renamed = tmp_path / "renamed.mp4"

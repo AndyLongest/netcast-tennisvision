@@ -43,11 +43,12 @@ const STAGE_MESSAGES = [
   [76, '正在确认击球与落地…', '按回合核验落点与界内外状态'],
   [92, '正在生成可视化报告…', '整理回放、落点地图与三维场景'],
 ];
-const ACTIVE_BACKEND_STATES = new Set(['queued', 'running', 'needs_court_calibration']);
+const ACTIVE_BACKEND_STATES = new Set(['queued', 'running', 'needs_court_calibration', 'report_ready']);
 
 let state = {
   isDemo: true, generated: true, name: '真实比赛样例', duration: 0,
   events: [], scene: null, objectUrl: null, file: null, annotated: true,
+  annotatedReady: true, reportVisible: false,
   displayCorrection: { enabled: false, strength: 0, corners: null },
 };
 let toastTimer;
@@ -312,7 +313,7 @@ function setView(view) {
 }
 
 function resetForNextAnalysis({ announce = false } = {}) {
-  if (!$('#processingView').hidden) {
+  if (!$('#processingView').hidden || state.renderingVideo) {
     toast('本场比赛仍在分析，完成后即可开始下一场');
     return;
   }
@@ -330,6 +331,7 @@ function resetForNextAnalysis({ announce = false } = {}) {
   state = {
     isDemo: true, generated: true, name: '真实比赛样例', duration: 0,
     events: [], scene: null, objectUrl: null, file: null, annotated: true,
+    annotatedReady: true, reportVisible: false, renderingVideo: false,
     displayCorrection: { enabled: false, strength: 0, corners: null },
   };
   setView('welcome');
@@ -374,6 +376,9 @@ function adoptBackendJob(status, { resumed = false } = {}) {
     objectUrl: null,
     file: null,
     annotated: false,
+    annotatedReady: false,
+    reportVisible: false,
+    renderingVideo: status.state === 'report_ready',
     jobId: status.job_id || null,
     videoFingerprint: status.video_fingerprint || null,
     displayCorrection: status.display_correction || { enabled: false, strength: 0, corners: null },
@@ -391,7 +396,10 @@ async function monitorBackendJob(initialStatus, token, { resumed = false } = {})
   adoptBackendJob(status, { resumed });
   while (token === backendRunToken) {
     updateStages(Number(status.progress) || 0);
-    if (status.state === 'needs_court_calibration') {
+    if (status.state === 'report_ready') {
+      state.renderingVideo = true;
+      await showResults({ annotatedReady: false });
+    } else if (status.state === 'needs_court_calibration') {
       $('#processingMessage').textContent = '自动识别需要你确认一下球场…';
       $('#timeHint').textContent = '仅在识别把握不足时出现，不会增加普通视频的步骤';
       await requestCourtCalibration(status.calibration);
@@ -403,8 +411,8 @@ async function monitorBackendJob(initialStatus, token, { resumed = false } = {})
     if (status.state === 'error') throw new Error(status.error || '分析失败');
     if (status.state === 'complete') {
       state.generated = true;
-      state.annotated = true;
-      await showResults();
+      state.renderingVideo = false;
+      await showResults({ annotatedReady: true });
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 1800));
@@ -619,6 +627,7 @@ function selectFile(file) {
   state = {
     ...state, isDemo: false, generated: false, name: file.name.replace(/\.[^.]+$/, ''),
     duration: 0, events: [], scene: null, file, objectUrl: URL.createObjectURL(file), annotated: false,
+    annotatedReady: false, reportVisible: false, renderingVideo: false,
   };
   openDisplayCorrection(file);
 }
@@ -627,6 +636,7 @@ function startDemo() {
   state = {
     ...state, isDemo: true, generated: true, name: '真实比赛样例', duration: 0,
     events: [], scene: null, file: null, annotated: true,
+    annotatedReady: true, reportVisible: false, renderingVideo: false,
     displayCorrection: { enabled: false, strength: 0, corners: null },
   };
   startAnalysis();
@@ -791,20 +801,51 @@ async function loadScene(path) {
   state.events = [...bounces, ...hits].sort((a, b) => a.time - b.time);
 }
 
-async function showResults() {
-  const loadToken = ++reportLoadToken;
+function switchReportVideo(source, { preservePlayback = false } = {}) {
   const video = $('#analysisVideo');
+  const time = preservePlayback ? video.currentTime : 0;
+  const wasPlaying = preservePlayback && !video.paused;
+  video.src = `${source}?v=${Date.now()}`;
+  video.load();
+  video.addEventListener('loadedmetadata', () => {
+    if (preservePlayback) video.currentTime = Math.min(time, video.duration || time);
+    updateMeta();
+    buildEvents();
+    renderAll();
+    if (wasPlaying) video.play().catch(() => {});
+  }, { once: true });
+}
+
+async function showResults({ annotatedReady = true } = {}) {
   const assets = activeOutput();
+  if (state.reportVisible) {
+    if (annotatedReady && !state.annotatedReady) {
+      state.annotatedReady = true;
+      state.annotated = true;
+      $('#overlayToggle').disabled = false;
+      $('#overlayToggle').checked = true;
+      $('#completeBadge').innerHTML = '<i></i> 分析完成';
+      switchReportVideo(assets.annotated, { preservePlayback: true });
+      toast('标注视频已生成，可以切换原始画面');
+    }
+    return;
+  }
+  const loadToken = ++reportLoadToken;
   try {
     await loadScene(assets.scene);
     if (loadToken !== reportLoadToken) return;
-    video.src = `${assets.annotated}?v=${Date.now()}`;
+    state.annotatedReady = annotatedReady;
+    state.annotated = annotatedReady;
+    state.reportVisible = true;
+    switchReportVideo(annotatedReady ? assets.annotated : OUTPUT.original);
     $('#sceneFrame').src = `${assets.viewer}?v=${Date.now()}`;
-    $('#overlayToggle').checked = true;
-    state.annotated = true;
+    $('#overlayToggle').checked = annotatedReady;
+    $('#overlayToggle').disabled = !annotatedReady;
     applyRealMetrics();
     $('#reportTitle').textContent = `${state.name} · 智能复盘`;
-    $('#completeBadge').innerHTML = '<i></i> 分析完成';
+    $('#completeBadge').innerHTML = annotatedReady
+      ? '<i></i> 分析完成'
+      : '<i></i> 报告已生成 · 标注视频生成中';
     $('#previewNotice').hidden = true;
     setView('results');
   } catch (error) {
@@ -814,8 +855,6 @@ async function showResults() {
     toast(state.isDemo ? '页面连接中断，请刷新后重试' : '报告读取失败，请重新分析该视频');
     return;
   }
-  video.load();
-  video.onloadedmetadata = () => { updateMeta(); buildEvents(); renderAll(); };
   updateMeta();
   buildEvents();
   renderAll();
@@ -1056,6 +1095,11 @@ $$('.event-filter button').forEach((button) => button.addEventListener('click', 
 window.addEventListener('resize', () => { if (!$('#resultsView').hidden) renderAll(); });
 $('#analysisVideo').addEventListener('timeupdate', (event) => { $('#playhead').style.left = `${Math.min(100, event.currentTarget.currentTime / Math.max(state.duration, 1) * 100)}%`; });
 $('#overlayToggle').addEventListener('change', (event) => {
+  if (!state.annotatedReady) {
+    event.target.checked = false;
+    toast('标注视频仍在后台生成，请稍候');
+    return;
+  }
   const video = $('#analysisVideo'), time = video.currentTime, wasPlaying = !video.paused;
   const assets = activeOutput();
   state.annotated = event.target.checked; video.src = state.annotated ? assets.annotated : assets.original; video.load();

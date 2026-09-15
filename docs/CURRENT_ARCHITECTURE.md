@@ -175,8 +175,97 @@ Below that threshold the job pauses and asks for four points in the fixed order 
 near-right, far-right, far-left. The submitted quadrilateral passes the same geometry and
 homography validation as automatic proposals before analysis resumes.
 
+The manual preview is selected from the full calibration sample rather than frame zero.
+Frames containing a detected court take priority, with visible contrast and spatial detail
+used as tie-breakers; if automatic court detection finds nothing, the clearest non-black
+sample is shown. This prevents a black intro or fade-in from producing an unusable marking
+canvas.
+
 For a fixed-camera job, an accepted automatic or manual quadrilateral is authoritative for
 every decoded frame. Per-frame paint contrast may control which line fragments are drawn,
 but it cannot revoke the court coordinate system or suppress ball tracking. The rounded
 four-corner geometry is part of the Pass-A cache signature, so a corrected calibration
 never reuses court metadata produced for different corners.
+
+## Report delivery and video rendering
+
+The interactive report is published as soon as `scene3d.json` and `rally3d.html` exist.
+The job enters `report_ready`, the browser opens the report against the original video,
+and the annotated MP4 continues rendering in the background. `report_ready` is an active,
+resumable job state: refreshing reconnects to it and another upload cannot overwrite its
+files. When encoding finishes, the player switches to the annotated video at the same
+playback time and enables the original/annotated toggle.
+
+Rendering uses x264 `veryfast`, CRF 20 and `faststart` by default. This affects only MP4
+compression; it does not rerun or alter detection, tracking, identity, or landing results.
+Set `NETCAST_X264_PRESET=medium` to restore the earlier encoder setting. On the 2880x1620,
+2779-frame `deemo3.mp4` benchmark, final rendering fell from 370s to 239s (35.4% faster).
+The before/after `scene3d.json` SHA-256 remained identical:
+`c93f53b6748cb0f543ebf148202d7b879ed915b5c8dbf2c1e301044d9f2e3f5e`.
+
+## Verified fixed-camera profiles
+
+An accepted calibration is now remembered as runtime data in
+`data/camera_profiles.json`. A later upload reuses it only when ORB feature matching and
+RANSAC prove that several early frames come from the same unmoved camera. The current
+frame must have at least 20 geometric inliers, an inlier ratio of at least 0.55 and less
+than 3.5 pixels of mean alignment movement on a 640-pixel-wide verification image.
+Otherwise the normal full calibration and optional four-point confirmation remain in
+force. `TENNISVISION_CAMERA_PROFILES=0` disables reuse immediately.
+
+The profile stores the trusted normalized four corners and the clean grayscale court
+plate losslessly. It does not refit or modify the corners on later clips. On `deemo3`,
+the fixed-camera lookup matched with 1,049 inliers, 0.994 inlier ratio and 0.178 pixels
+alignment movement. The lookup itself took 1.19s; the notebook's cached calibration path
+took approximately 8.3s instead of 119.3s for a fresh multi-frame court search. The
+production trajectory/report hash remained exactly
+`c93f53b6748cb0f543ebf148202d7b879ed915b5c8dbf2c1e301044d9f2e3f5e`.
+
+## Ball-inference preprocessing
+
+RacketVision now converts every resized input frame from HWC `uint8` to CHW `float32`
+once when the frame enters the four-frame window. Previously the same frame was converted
+again for each overlapping window. On the 1,737-frame 720p `demo`, model-loop throughput
+rose from 23.2 FPS to 24.2 FPS (about 4.3%), while candidate presence, coordinates and
+confidence values were exactly equal.
+
+A bounded two-batch prefetch queue additionally prepares the next native-rate batch on
+the CPU while the GPU processes the current batch. It does not change frame order, model
+inputs or thresholds. On the same `demo`, the inference loop rose from 23.6 FPS to 33.2
+FPS, and total ball-stage time including fixed setup fell from 83.0s to 62.6s (24.6%). All
+1,737 candidate rows were exactly equal. Set `TENNISVISION_RACKETVISION_PREFETCH=0` for
+an immediate rollback to serial preparation.
+
+Full-rate person segmentation uses the same bounded-overlap principle: one worker
+prepares the next unchanged YOLO result batch while the main thread expands, dilates and
+PNG-compresses the prior masks. A four-run crossover on `demo` reduced this isolated
+stage from 42.09s to 28.31s (1.49×), with identical hashes for every player box and mask.
+The integrated notebook's person portion of Pass A improved more modestly, from 44.75s to
+41.18s, because other per-frame CPU work competes for the same resources. The complete
+structured report also remained byte-identical to the serial control. Set
+`TENNISVISION_PERSON_PREFETCH=0` for an immediate rollback. End-to-end wall time remains
+noisy; timings and rejected alternatives are recorded in
+`docs/PERFORMANCE_EXPERIMENT_2026-09-15.md`.
+
+RacketVision's deterministic 180-frame median background is sampled by four independent
+decoder instances, then restored to source-frame order before the median. On `demo` this
+reduced background construction from 9.44s to 4.70s; the median image and all 1,737 ball
+candidate rows remained exact. Set `TENNISVISION_BACKGROUND_WORKERS=1` for the serial
+rollback. `TENNISVISION_PARALLEL_DETECTORS=1` remains a server-only experiment: it keeps
+the demo outputs exact, but the current 4GB development GPU loses most of the theoretical
+gain to ball/person contention.
+
+Person stride-two and TensorRT person experiments are deliberately not production
+features. Stride two removed two racket-contact events on `demo`; TensorRT offered only
+about 2.5% person-model gain on this RTX 3050 Ti and changed downstream events. Both were
+removed. Production remains full-frame PyTorch person inference and native-frame-rate
+RacketVision ball inference.
+
+### Uncached end-to-end timing
+
+On 2026-09-15, `deemo3.mp4` (2880x1620, 2,779 frames, 200.3s) was run with an empty
+ball/Pass-A/audio cache and an already verified fixed-camera profile. The interactive
+report became available after 484.09s (8m04s). The unchanged-resolution annotated MP4
+finished after 753.19s (12m33s), including 269s of background rendering. The resulting
+scene retained 782 tracked frames, 8 bounces and 4 racket hits, and its SHA-256 remained
+exactly `c93f53b6748cb0f543ebf148202d7b879ed915b5c8dbf2c1e301044d9f2e3f5e`.

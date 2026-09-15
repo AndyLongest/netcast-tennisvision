@@ -10,9 +10,12 @@ from __future__ import annotations
 import hashlib
 import os
 import pickle
+import queue
+import threading
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import cv2
@@ -25,6 +28,8 @@ MODEL_HEIGHT = 288
 SEQUENCE_LENGTH = 4
 DEFAULT_THRESHOLD = 0.5
 DEFAULT_BATCH_SIZE = 4
+DEFAULT_PREFETCH = True
+DEFAULT_BACKGROUND_WORKERS = 4
 ProgressCallback = Callable[[int, int], None]
 
 
@@ -116,16 +121,41 @@ def _metadata(video: Path) -> tuple[int, int, int]:
     return width, height, total
 
 
-def _median_background(video: Path, total_frames: int, samples: int = 180) -> np.ndarray:
+def _sample_background_frames(
+    video: Path, frame_indices: list[int],
+) -> list[tuple[int, np.ndarray]]:
+    """Read one deterministic subset with its own decoder instance."""
     capture = cv2.VideoCapture(str(video))
-    frame_indices = np.linspace(0, total_frames - 1, min(samples, total_frames), dtype=int)
-    frames = []
+    frames: list[tuple[int, np.ndarray]] = []
     for frame_index in frame_indices:
         capture.set(cv2.CAP_PROP_POS_FRAMES, int(frame_index))
         ok, frame = capture.read()
         if ok:
-            frames.append(cv2.resize(frame, (MODEL_WIDTH, MODEL_HEIGHT)))
+            frames.append((int(frame_index), cv2.resize(frame, (MODEL_WIDTH, MODEL_HEIGHT))))
     capture.release()
+    return frames
+
+
+def _median_background(video: Path, total_frames: int, samples: int = 180) -> np.ndarray:
+    frame_indices = list(map(
+        int, np.linspace(0, total_frames - 1, min(samples, total_frames), dtype=int)
+    ))
+    workers = max(1, min(
+        8, int(os.environ.get("TENNISVISION_BACKGROUND_WORKERS", DEFAULT_BACKGROUND_WORKERS))
+    ))
+    if workers == 1:
+        indexed_frames = _sample_background_frames(video, frame_indices)
+    else:
+        chunks = [frame_indices[offset::workers] for offset in range(workers)]
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="background-sample") as pool:
+            indexed_frames = [
+                item
+                for result in pool.map(
+                    lambda chunk: _sample_background_frames(video, chunk), chunks
+                )
+                for item in result
+            ]
+    frames = [frame for _index, frame in sorted(indexed_frames, key=lambda item: item[0])]
     if not frames:
         raise RuntimeError("无法为 RacketVision 建立视频背景")
     return np.median(np.stack(frames), axis=0).astype(np.uint8)
@@ -233,6 +263,77 @@ def _cache_key(
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
 
 
+def _prepared_input_batches(
+    video: Path,
+    background_channels: np.ndarray,
+    batch_size: int,
+) -> Iterator[np.ndarray]:
+    """Decode and prepare native-rate temporal inputs in their original order."""
+    capture = cv2.VideoCapture(str(video))
+    if not capture.isOpened():
+        raise RuntimeError(f"无法打开视频：{video}")
+    window: deque[np.ndarray] = deque(maxlen=SEQUENCE_LENGTH)
+    pending: list[np.ndarray] = []
+    try:
+        while True:
+            ok, frame = capture.read()
+            if not ok:
+                break
+            resized = cv2.resize(frame, (MODEL_WIDTH, MODEL_HEIGHT))
+            # A frame belongs to four consecutive temporal windows. Convert it once here
+            # instead of repeating the same uint8->CHW float work on every reuse.
+            window.append(np.moveaxis(resized.astype(np.float32) / 255.0, -1, 0))
+            sequence = list(window)
+            while len(sequence) < SEQUENCE_LENGTH:
+                sequence.insert(0, sequence[0])
+            pending.append(np.concatenate(
+                [background_channels, *sequence[-SEQUENCE_LENGTH:]], axis=0,
+            ))
+            if len(pending) >= batch_size:
+                yield np.stack(pending, axis=0)
+                pending.clear()
+        if pending:
+            yield np.stack(pending, axis=0)
+    finally:
+        capture.release()
+
+
+def _input_batches(
+    video: Path,
+    background_channels: np.ndarray,
+    batch_size: int,
+    *,
+    prefetch: bool,
+) -> Iterator[np.ndarray]:
+    """Optionally overlap CPU decoding/preparation with GPU inference."""
+    source = _prepared_input_batches(video, background_channels, batch_size)
+    if not prefetch:
+        yield from source
+        return
+
+    items: queue.Queue[np.ndarray | BaseException | None] = queue.Queue(maxsize=2)
+
+    def produce() -> None:
+        try:
+            for prepared in source:
+                items.put(prepared)
+        except BaseException as error:
+            items.put(error)
+        finally:
+            items.put(None)
+
+    worker = threading.Thread(target=produce, name="racketvision-prefetch", daemon=True)
+    worker.start()
+    while True:
+        item = items.get()
+        if item is None:
+            break
+        if isinstance(item, BaseException):
+            raise item
+        yield item
+    worker.join()
+
+
 def detect_video_candidates(
     video: Path,
     checkpoint: Path,
@@ -244,6 +345,7 @@ def detect_video_candidates(
     max_candidates: int = 1,
     alternative_threshold: float | None = None,
     progress: ProgressCallback | None = None,
+    prefetch: bool | None = None,
 ) -> list[list[tuple[float, float, float, float, float]]]:
     """Return one candidate row per source frame.
 
@@ -255,6 +357,9 @@ def detect_video_candidates(
     if batch_size is None:
         batch_size = int(os.environ.get("TENNISVISION_RACKETVISION_BATCH_SIZE", DEFAULT_BATCH_SIZE))
     batch_size = max(1, int(batch_size))
+    if prefetch is None:
+        default_prefetch = "1" if DEFAULT_PREFETCH else "0"
+        prefetch = os.environ.get("TENNISVISION_RACKETVISION_PREFETCH", default_prefetch) != "0"
     max_candidates = max(1, int(max_candidates))
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cache_dir / (
@@ -274,17 +379,12 @@ def detect_video_candidates(
         device if str(device).startswith("cuda") and torch.cuda.is_available() else "cpu"
     )
     model = load_model(checkpoint, runtime_device)
-    capture = cv2.VideoCapture(str(video))
-    window: deque[np.ndarray] = deque(maxlen=SEQUENCE_LENGTH)
     candidates: list[list[tuple[float, float, float, float, float]]] = []
-    pending_inputs: list[np.ndarray] = []
     started = time.perf_counter()
 
-    def flush_batch() -> None:
-        if not pending_inputs:
-            return
+    def infer_batch(prepared: np.ndarray) -> None:
         completed_before = len(candidates)
-        inputs = torch.from_numpy(np.stack(pending_inputs, axis=0)).to(
+        inputs = torch.from_numpy(prepared).to(
             runtime_device, non_blocking=True
         )
         with torch.inference_mode():
@@ -299,31 +399,14 @@ def detect_video_candidates(
                 max_candidates=max_candidates,
                 alternative_threshold=alternative_threshold,
             ))
-        pending_inputs.clear()
         crossed_progress_step = len(candidates) // 100 > completed_before // 100
         if progress is not None and (crossed_progress_step or len(candidates) >= total_frames):
             progress(len(candidates), total_frames)
 
-    while True:
-        ok, frame = capture.read()
-        if not ok:
-            break
-        resized = cv2.resize(frame, (MODEL_WIDTH, MODEL_HEIGHT))
-        window.append(resized)
-        sequence = list(window)
-        while len(sequence) < SEQUENCE_LENGTH:
-            sequence.insert(0, sequence[0])
-        channels = [background_channels]
-        channels.extend(
-            np.moveaxis(item.astype(np.float32) / 255.0, -1, 0)
-            for item in sequence[-SEQUENCE_LENGTH:]
-        )
-        pending_inputs.append(np.concatenate(channels, axis=0))
-        if len(pending_inputs) >= batch_size:
-            flush_batch()
-
-    capture.release()
-    flush_batch()
+    for prepared in _input_batches(
+        video, background_channels, batch_size, prefetch=bool(prefetch),
+    ):
+        infer_batch(prepared)
     if runtime_device.type == "cuda":
         torch.cuda.empty_cache()
     if progress is not None:
@@ -339,7 +422,8 @@ def detect_video_candidates(
     detected = sum(bool(row) for row in candidates)
     print(
         f"RacketVision: {detected}/{len(candidates)} frames have a public-model candidate "
-        f"({len(candidates) / max(elapsed, 1e-9):.1f} fps, batch={batch_size})",
+        f"({len(candidates) / max(elapsed, 1e-9):.1f} fps, batch={batch_size}, "
+        f"prefetch={int(bool(prefetch))})",
         flush=True,
     )
     return candidates

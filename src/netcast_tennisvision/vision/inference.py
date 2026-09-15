@@ -122,26 +122,58 @@ def _predict_people(
 
 def iter_batched_person_detections(
     capture: Any, person_model: Any, *, device: str, batch_size: int,
-    person_kwargs: dict[str, Any],
+    person_kwargs: dict[str, Any], prefetch: bool = False,
 ) -> Iterator[tuple[Any, Any]]:
     """Decode sequentially and batch the unchanged player-segmentation pass."""
+    def synchronous() -> Iterator[tuple[Any, Any]]:
+        while True:
+            frames = []
+            for _ in range(batch_size):
+                ok, frame = capture.read()
+                if not ok:
+                    break
+                frames.append(frame)
+            if not frames:
+                return
+            yield from _predict_people(
+                frames, person_model, device=device, person_kwargs=person_kwargs
+            )
+
+    if not prefetch:
+        yield from synchronous()
+        return
+
+    # Keep one inferred batch ready while the notebook expands/compresses the previous
+    # masks. The queue is deliberately bounded: this is overlap, not frame buffering.
+    items: queue.Queue[Any] = queue.Queue(maxsize=max(2, batch_size * 2))
+    finished = object()
+
+    def produce() -> None:
+        try:
+            for item in synchronous():
+                items.put(item)
+        except BaseException as exc:
+            items.put(exc)
+        finally:
+            items.put(finished)
+
+    worker = threading.Thread(
+        target=produce, name="tennisvision-person-prefetch", daemon=True
+    )
+    worker.start()
     while True:
-        frames = []
-        for _ in range(batch_size):
-            ok, frame = capture.read()
-            if not ok:
-                break
-            frames.append(frame)
-        if not frames:
+        item = items.get()
+        if item is finished:
+            worker.join()
             return
-        yield from _predict_people(
-            frames, person_model, device=device, person_kwargs=person_kwargs
-        )
+        if isinstance(item, BaseException):
+            raise item
+        yield item
 
 
 def iter_sparse_person_detections(
     capture: Any, person_model: Any, *, device: str, batch_size: int,
-    person_kwargs: dict[str, Any], stride: int = 2,
+    person_kwargs: dict[str, Any], stride: int = 2, prefetch: bool = False,
 ) -> Iterator[tuple[Any, Any, Any | None, float, bool]]:
     """Infer slow-moving players on keyframes while yielding every native video frame.
 
@@ -153,7 +185,7 @@ def iter_sparse_person_detections(
     if stride == 1:
         for frame, result in iter_batched_person_detections(
             capture, person_model, device=device, batch_size=batch_size,
-            person_kwargs=person_kwargs,
+            person_kwargs=person_kwargs, prefetch=prefetch,
         ):
             yield frame, result, result, 0.0, True
         return

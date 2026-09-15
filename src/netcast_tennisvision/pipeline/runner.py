@@ -14,6 +14,11 @@ from pathlib import Path
 
 from netcast_tennisvision.paths import REPOSITORY_ROOT
 from netcast_tennisvision.vision.display_correction import apply_display_correction
+from netcast_tennisvision.pipeline.video_encoding import raw_h264_output_args
+from netcast_tennisvision.vision.camera_profiles import (
+    find_camera_calibration,
+    remember_camera_calibration,
+)
 
 ROOT = REPOSITORY_ROOT
 NOTEBOOK = ROOT / "notebooks" / "tennis_detection.ipynb"
@@ -239,8 +244,12 @@ def main() -> None:
         "_pipeline_manual_court_calibration": request_manual_court_calibration,
         "_pipeline_display_correction": display_correction,
         "_pipeline_apply_display_correction": apply_display_correction,
+        "_pipeline_video_output_args": raw_h264_output_args,
+        "_pipeline_find_camera_calibration": find_camera_calibration,
+        "_pipeline_remember_camera_calibration": remember_camera_calibration,
     }
     os.chdir(ROOT)
+    report_published = False
     try:
         for index, cell in enumerate(notebook["cells"]):
             # Cells 23-24 are the retired clip-trained BallNet. RacketVision now supplies
@@ -248,15 +257,34 @@ def main() -> None:
             if cell.get("cell_type") != "code" or index in (23, 24, 36):
                 continue
             progress, stage = progress_for(index)
-            write_status("running", progress, stage)
+            if not report_published:
+                write_status("running", progress, stage)
             source = "".join(cell.get("source", []))
             exec(compile(source, f"{NOTEBOOK.name}:cell-{index}", "exec"), namespace)
+            if index == 32:
+                report_outputs = [
+                    ROOT / "data" / "outputs" / "scene3d.json",
+                    ROOT / "data" / "outputs" / "rally3d.html",
+                ]
+                missing_report = [path.name for path in report_outputs if not path.exists()]
+                if missing_report:
+                    raise RuntimeError("报告生成结束但缺少输出：" + ", ".join(missing_report))
+                write_status(
+                    "report_ready", 96,
+                    "分析报告已生成，正在后台生成标注视频",
+                    report_ready=True,
+                    annotated_video_ready=False,
+                )
+                report_published = True
         outputs = ROOT / "data" / "outputs"
         required = [outputs / "annotated_clip.mp4", outputs / "scene3d.json", outputs / "rally3d.html"]
         missing = [path.name for path in required if not path.exists()]
         if missing:
             raise RuntimeError("分析结束但缺少输出：" + ", ".join(missing))
-        write_status("complete", 100, "真实分析完成（RacketVision公开权重·纯推理）")
+        write_status(
+            "complete", 100, "真实分析完成（RacketVision公开权重·纯推理）",
+            report_ready=True, annotated_video_ready=True,
+        )
     except Exception as exc:
         traceback.print_exc()
         write_status("error", 100, "分析失败", f"{type(exc).__name__}: {exc}")

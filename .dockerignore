@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+.cache
+__pycache__
+*.pyc
+data
+outputs
+models
+docs/references/*.pdf
+docs/history/*.log
+*.mp4
+!assets/demo/demo.mp4
+!assets/demo/annotated_clip.mp4

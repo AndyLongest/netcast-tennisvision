@@ -1,6 +1,7 @@
 import json
 
 from netcast_tennisvision.pipeline import runner as pipeline_runner
+from netcast_tennisvision.pipeline.video_encoding import raw_h264_output_args
 
 
 def test_status_write_retries_a_transient_windows_lock(tmp_path, monkeypatch):
@@ -38,3 +39,17 @@ def test_status_lock_never_aborts_analysis(tmp_path, monkeypatch):
 
     pipeline_runner.write_status("running", 48, "测试")
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_video_encoder_uses_fast_reversible_default(monkeypatch):
+    monkeypatch.delenv("NETCAST_X264_PRESET", raising=False)
+    monkeypatch.delenv("NETCAST_X264_CRF", raising=False)
+    args = raw_h264_output_args()
+    assert args[args.index("-preset") + 1] == "veryfast"
+    assert args[args.index("-crf") + 1] == "20"
+    assert "+faststart" in args
+
+
+def test_video_encoder_can_restore_previous_preset(monkeypatch):
+    monkeypatch.setenv("NETCAST_X264_PRESET", "medium")
+    assert raw_h264_output_args()[3] == "medium"

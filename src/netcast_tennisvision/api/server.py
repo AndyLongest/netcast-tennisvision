@@ -30,7 +30,7 @@ CALIBRATION_REQUEST = DATA / "court_calibration_request.json"
 CALIBRATION_RESPONSE = DATA / "court_calibration_response.json"
 job_lock = threading.Lock()
 job_process: subprocess.Popen[bytes] | None = None
-ACTIVE_STATES = {"queued", "running", "needs_court_calibration"}
+ACTIVE_STATES = {"queued", "running", "needs_court_calibration", "report_ready"}
 
 
 def read_json(path: Path) -> dict[str, object]:

@@ -22,7 +22,7 @@ foreach ($candidatePort in 4173..4183) {
 
 if ($null -eq $port) {
     if (-not (Test-Path -LiteralPath $python)) {
-        throw "Netcast TennisVision 尚未安装。请先在项目目录运行 .\setup.ps1"
+        throw "Netcast TennisVision is not installed. Run .\setup.ps1 first."
     }
     foreach ($candidatePort in 4173..4183) {
         $listener = $null
@@ -41,7 +41,7 @@ if ($null -eq $port) {
         }
     }
     if ($null -eq $port) {
-        throw "4173–4183 端口均被占用，无法启动 Netcast TennisVision。"
+        throw "Ports 4173-4183 are unavailable. Netcast TennisVision cannot start."
     }
     $server = Start-Process -FilePath $python `
         -ArgumentList @("-m", "netcast_tennisvision", "--port", "$port") `
@@ -50,7 +50,7 @@ if ($null -eq $port) {
     for ($attempt = 0; $attempt -lt 30; $attempt++) {
         Start-Sleep -Milliseconds 200
         if ($server.HasExited) {
-            throw "Netcast TennisVision 分析服务在启动过程中退出。"
+            throw "The Netcast TennisVision service exited during startup."
         }
         if (Test-NetcastTennisVisionServer $port) {
             $ready = $true
@@ -58,11 +58,11 @@ if ($null -eq $port) {
         }
     }
     if (-not $ready) {
-        throw "Netcast TennisVision 分析服务未能及时启动。"
+        throw "The Netcast TennisVision service did not become ready in time."
     }
 }
 
 $baseUrl = "http://127.0.0.1:$port"
 $appUrl = "$baseUrl/web/"
-Write-Host "Netcast TennisVision 已就绪：$appUrl" -ForegroundColor Green
+Write-Host "Netcast TennisVision is ready: $appUrl" -ForegroundColor Green
 Start-Process $appUrl

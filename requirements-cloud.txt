@@ -1,0 +1,2 @@
+# PPIO Async Serverless implements the RunPod worker protocol.
+runpod==1.12.0

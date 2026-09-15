@@ -73,3 +73,18 @@ def test_sparse_stride_one_matches_full_person_inference():
         person_kwargs={}, stride=1,
     ))
     assert output == [(i, f"p{i}", f"p{i}", 0.0, True) for i in range(5)]
+
+
+def test_person_prefetch_preserves_frame_order_and_results():
+    serial_model = FakeModel("p")
+    prefetched_model = FakeModel("p")
+    serial = list(iter_sparse_person_detections(
+        FakeCapture(list(range(11))), serial_model, device="cuda", batch_size=4,
+        person_kwargs={}, stride=1, prefetch=False,
+    ))
+    prefetched = list(iter_sparse_person_detections(
+        FakeCapture(list(range(11))), prefetched_model, device="cuda", batch_size=4,
+        person_kwargs={}, stride=1, prefetch=True,
+    ))
+    assert prefetched == serial
+    assert prefetched_model.calls == serial_model.calls == [4, 4, 3]

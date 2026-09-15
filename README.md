@@ -136,6 +136,8 @@ candidate.
 
 - [New engineer/Agent handoff](docs/HANDOFF.md)
 - [Current architecture and algorithm rules](docs/CURRENT_ARCHITECTURE.md)
+- [End-to-end acceleration deep research](docs/ACCELERATION_DEEP_RESEARCH.md)
+- [Native-rate acceleration experiment](docs/PERFORMANCE_EXPERIMENT_2026-09-15.md)
 - [Repository structure and dependency rules](docs/PROJECT_STRUCTURE.md)
 - [Developer handoff guide](docs/DEVELOPMENT.md)
 - [Prioritized next steps](docs/NEXT_STEPS.md)

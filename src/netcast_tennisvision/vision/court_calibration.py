@@ -20,6 +20,30 @@ class CalibrationConfidence:
         return asdict(self)
 
 
+def calibration_preview_score(frame: np.ndarray, *, court_detected: bool) -> float:
+    """Rank sampled frames for the manual four-corner preview.
+
+    Videos commonly begin with a black transition.  A preview must therefore be chosen
+    from the sampled sequence, not hard-wired to frame zero.  A frame in which the court
+    detector already found a plausible quadrilateral always outranks a merely bright
+    frame; contrast and spatial detail break ties between otherwise valid samples.
+    """
+    image = np.asarray(frame)
+    if image.ndim != 3 or image.shape[0] < 2 or image.shape[1] < 2:
+        return float("-inf")
+    gray = image.astype(np.float32).mean(axis=2)
+    low, high = np.percentile(gray, (5, 95))
+    contrast = float(high - low)
+    detail = float(
+        np.mean(np.abs(np.diff(gray, axis=0)))
+        + np.mean(np.abs(np.diff(gray, axis=1)))
+    )
+    visible = float(high) >= 12.0 and (contrast >= 5.0 or detail >= 1.0)
+    if not visible:
+        return -1_000_000.0 + float(high) + contrast + detail
+    return (1_000_000.0 if court_detected else 0.0) + float(high) + contrast + detail
+
+
 def automatic_calibration_confidence(
     *, sampled_frames: int, detected_frames: int, consensus_support: int,
     fit_error_px: float, fit_note: str = "",
