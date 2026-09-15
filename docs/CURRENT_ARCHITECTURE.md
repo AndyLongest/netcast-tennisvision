@@ -213,14 +213,21 @@ disconnects while an existing instance starts are retried until the startup dead
 instance creation itself is never blindly retried because that could allocate two GPUs.
 
 Rendering first performs a one-frame NVENC preflight. A usable NVIDIA encoder receives the
-unchanged rendered frames with the `p4`/CQ20 quality profile; otherwise the process falls
-back to x264 `veryfast`, CRF 20 and `faststart`. This affects only MP4 compression; it does
+unchanged rendered frames with the `p4`/CQ20 quality profile; otherwise an on-demand cloud
+job falls back to x264 `veryfast`, CRF 22 and `faststart`. This affects only MP4 compression; it does
 not rerun or alter detection, tracking, identity, or landing results. Set
 `NETCAST_VIDEO_ENCODER=x264` for the exact software-encoder rollback and
-`NETCAST_X264_PRESET=medium` for the older x264 preset. On the 2880x1620,
+`NETCAST_X264_CRF=20` for the previous cloud bitrate. A 30-second 2880x1620 `deemo2`
+review segment fell from 28.35 MB to 19.32 MB at CRF22 with SSIM 0.9924; resolution,
+frame rate and H.264 compatibility stayed unchanged. On the 2880x1620,
 2779-frame `deemo3.mp4` benchmark, final rendering fell from 370s to 239s (35.4% faster).
 The before/after `scene3d.json` SHA-256 remained identical:
 `c93f53b6748cb0f543ebf148202d7b879ed915b5c8dbf2c1e301044d9f2e3f5e`.
+
+The cloud transport and fixed-camera A/B is recorded in
+`docs/experiments/CLOUD_ACCELERATION_2026-09-16.md`. The accepted v8 path reduced the
+same `deemo2` complete time from about 598s to 498s. CRF22's complete cloud timing remains
+pending because the next provider allocation was rejected for insufficient balance.
 
 ## Verified fixed-camera profiles
 

@@ -6,6 +6,7 @@ not supported runtime modes. Current behavior is defined by
 
 | Report | Scope |
 |---|---|
+| [`CLOUD_ACCELERATION_2026-09-16.md`](CLOUD_ACCELERATION_2026-09-16.md) | PPIO transfer, camera reuse and encoding A/B |
 | [`ACCELERATION_DEEP_RESEARCH.md`](ACCELERATION_DEEP_RESEARCH.md) | Survey of end-to-end acceleration options |
 | [`OPEN_SOURCE_RUNTIME_BENCHMARK.md`](OPEN_SOURCE_RUNTIME_BENCHMARK.md) | Comparable open-source runtime evidence |
 | [`PERFORMANCE_EXPERIMENT_2026-09-15.md`](PERFORMANCE_EXPERIMENT_2026-09-15.md) | Native-rate local acceleration A/B results |

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,7 @@ def test_new_instance_command_clears_runtime_cache_but_not_models(tmp_path, monk
     assert captured["rootfsSize"] == 80
     assert "find data/cache data/outputs" in captured["command"]
     assert "data/camera_profiles.json" in captured["command"]
+    assert "NETCAST_X264_CRF=22" in captured["command"]
     assert "models" not in captured["command"]
 
 
@@ -92,3 +94,24 @@ def test_endpoint_wait_tolerates_transient_provider_disconnect(tmp_path, monkeyp
     monkeypatch.setattr("netcast_tennisvision.cloud.ppio_lifecycle.time.sleep", lambda _delay: None)
 
     assert lifecycle._wait_for_endpoint("gpu-1") == "https://worker.example"
+
+
+def test_cloud_status_write_retries_a_transient_windows_reader_lock(tmp_path, monkeypatch):
+    destination = tmp_path / "status.json"
+    real_replace = os.replace
+    attempts = 0
+
+    def flaky_replace(source, target):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise PermissionError(5, "locked")
+        real_replace(source, target)
+
+    monkeypatch.setattr("netcast_tennisvision.cloud.ppio_lifecycle.os.replace", flaky_replace)
+    monkeypatch.setattr("netcast_tennisvision.cloud.ppio_lifecycle.time.sleep", lambda _delay: None)
+
+    PPIOJobManager._write_json(destination, {"state": "running"})
+
+    assert attempts == 3
+    assert PPIOJobManager._read_json(destination) == {"state": "running"}

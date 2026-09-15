@@ -15,7 +15,10 @@
 
 - Added bounded parallel cloud upload/download, verified fixed-camera profile handoff and
   preflighted NVENC encoding with automatic x264 rollback; analysis inputs are unchanged.
-- Adjusted the PPIO ephemeral root filesystem to the provider's current 84 GB ceiling.
+- Reduced cloud review-video transfer size with a same-resolution CRF22 profile validated
+  at SSIM 0.9924; local x264 defaults and structured analysis outputs remain unchanged.
+- Adjusted the PPIO ephemeral root filesystem to 80 GB, within the provider's current
+  84 GB ceiling.
 - Added one canonical documentation index, a close-to-code package ownership map and a
   complete developer-tool catalog; dated benchmarks now live under `docs/experiments/`.
 - The handoff gate now rejects broken local documentation links and missing Agent entry

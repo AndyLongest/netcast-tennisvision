@@ -183,6 +183,7 @@ class PPIOJobManager:
                 "exec timeout --signal=TERM 7200 env "
                 "TENNISVISION_HOST=0.0.0.0 "
                 "TENNISVISION_PORT=8000 TENNISVISION_EXECUTION_TARGET=cloud "
+                "NETCAST_VIDEO_ENCODER=auto NETCAST_X264_CRF=22 "
                 "PYTHONPATH=/app/src MPLBACKEND=Agg "
                 "python -m netcast_tennisvision.api.server --port 8000'"
             ),
@@ -695,6 +696,18 @@ class PPIOJobManager:
     @staticmethod
     def _write_json(path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-        temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        os.replace(temporary, path)
+        temporary = path.with_name(
+            f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+        )
+        try:
+            temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            for attempt in range(30):
+                try:
+                    os.replace(temporary, path)
+                    return
+                except PermissionError:
+                    if attempt == 29:
+                        raise
+                    time.sleep(0.01 * (1 + attempt // 5))
+        finally:
+            temporary.unlink(missing_ok=True)
