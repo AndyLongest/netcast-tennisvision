@@ -28,6 +28,15 @@ jobs:
           username: ${{ secrets.PPIO_REGISTRY_USERNAME }}
           password: ${{ secrets.PPIO_REGISTRY_PASSWORD }}
 
+      - name: Install ORAS
+        uses: oras-project/setup-oras@v1
+
+      - name: Fetch the frozen runtime assets
+        run: |
+          mkdir -p .cloud-runtime-assets
+          oras pull "${{ secrets.PPIO_ASSET_REPOSITORY }}:runtime-v1" \
+            --output .cloud-runtime-assets
+
       - name: Build and publish the benchmark worker
         uses: docker/build-push-action@v6
         with:
@@ -35,6 +44,8 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: ${{ secrets.PPIO_IMAGE_REPOSITORY }}:${{ inputs.image_tag }}
+          build-contexts: |
+            runtime-assets=.cloud-runtime-assets
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

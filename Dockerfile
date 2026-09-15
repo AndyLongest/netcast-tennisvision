@@ -17,7 +17,7 @@ RUN python -m pip install --no-cache-dir -r requirements-cloud.txt \
     && python -m pip install --no-cache-dir --no-deps .
 
 COPY . .
-RUN python tools/install_assets.py --group runtime \
-    && python tools/verify_install.py
+COPY --from=runtime-assets /models ./models
+RUN python tools/verify_install.py
 
 CMD ["python", "-m", "netcast_tennisvision.cloud.worker"]
