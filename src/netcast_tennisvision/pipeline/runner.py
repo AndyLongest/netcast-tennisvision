@@ -13,12 +13,12 @@ import uuid
 from pathlib import Path
 
 from netcast_tennisvision.paths import REPOSITORY_ROOT
-from netcast_tennisvision.vision.display_correction import apply_display_correction
 from netcast_tennisvision.pipeline.video_encoding import raw_h264_output_args
 from netcast_tennisvision.vision.camera_profiles import (
     find_camera_calibration,
     remember_camera_calibration,
 )
+from netcast_tennisvision.vision.display_correction import apply_display_correction
 
 ROOT = REPOSITORY_ROOT
 NOTEBOOK = ROOT / "notebooks" / "tennis_detection.ipynb"
@@ -292,4 +292,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        # Startup checks happen before the notebook execution boundary.  Surface
+        # those failures as terminal job state as well, otherwise the UI can remain
+        # forever on "loading models" after the worker has already exited.
+        write_status("error", 100, "分析失败", f"{type(exc).__name__}: {exc}")
+        raise

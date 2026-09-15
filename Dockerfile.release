@@ -4,13 +4,18 @@ FROM image.ppinfra.com/prod-ahskpcitxxwcgdnfqfpu/netcast-tennisvision:production
 # all model assets.  Release images are intentionally thin code-only overlays so
 # an on-demand worker does not have to cold-pull a second full ML runtime.
 WORKDIR /app
-COPY src ./src
-COPY web ./web
-COPY tools ./tools
-COPY pyproject.toml README.md ./
+COPY . .
 
 ENV PYTHONPATH=/app/src
 
-RUN python -c "import netcast_tennisvision; import netcast_tennisvision.api.server"
+RUN set -eux; \
+    if [ ! -d /app/models ]; then \
+      for candidate in /opt/netcast/models /workspace/models /models; do \
+        if [ -d "$candidate" ]; then ln -s "$candidate" /app/models; break; fi; \
+      done; \
+    fi; \
+    test -f /app/models/racketvision_balltrack_state_v1.pt; \
+    test -f /app/models/bounce_classifier_production_v1.pkl; \
+    python tools/verify_install.py
 
 CMD ["python", "-m", "netcast_tennisvision.cloud.worker"]
