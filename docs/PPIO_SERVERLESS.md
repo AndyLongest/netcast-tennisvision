@@ -25,10 +25,13 @@ Credentials -> Image Registry Upload Credentials.
 
 ## Build
 
-Run the `Build private PPIO benchmark image` workflow manually from the branch being
-tested. The workflow builds the repository revision, installs checksummed runtime
-assets from `assets/manifest.json`, and pushes only to the account's private PPIO
-registry.
+Push an annotated `production-v*` tag to build a production release. The workflow uses
+`Dockerfile.release` to layer current source and web assets over the already-audited
+private `production-v1` runtime, validates that all three frozen production checkpoints
+are reachable, and pushes the versioned tag only to the account's private PPIO registry.
+This avoids rebuilding CUDA, Python dependencies, and model weights for every code-only
+release. The full `Dockerfile` remains the reproducible path for intentionally rebuilding
+the ML runtime and its checksummed assets.
 
 ## Endpoint guardrails
 

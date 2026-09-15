@@ -202,6 +202,14 @@ analysis endpoint. Generated MP4 files return through 8 MiB byte ranges. This ke
 request below the provider HTTP gateway's large-body risk boundary and prevents one
 network interruption from retransmitting an entire match.
 
+Production cloud releases use `Dockerfile.release`: a thin code overlay on the audited
+`production-v1` ML runtime. The legacy image stores frozen weights in
+`/opt/netcast/models`; the release maps that directory to the canonical `/app/models`
+path and refuses to publish unless the ball, bounce, and player-identity checkpoints are
+all present. The relay currently pins `production-v7`. Short PPIO control-plane TLS
+disconnects while an existing instance starts are retried until the startup deadline;
+instance creation itself is never blindly retried because that could allocate two GPUs.
+
 Rendering uses x264 `veryfast`, CRF 20 and `faststart` by default. This affects only MP4
 compression; it does not rerun or alter detection, tracking, identity, or landing results.
 Set `NETCAST_X264_PRESET=medium` to restore the earlier encoder setting. On the 2880x1620,
