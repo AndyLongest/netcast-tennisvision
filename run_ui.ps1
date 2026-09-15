@@ -3,10 +3,14 @@ $cloudProvider = [Environment]::GetEnvironmentVariable("TENNISVISION_CLOUD_PROVI
 $cloudUrl = [Environment]::GetEnvironmentVariable("TENNISVISION_CLOUD_URL", "User")
 $cloudToken = [Environment]::GetEnvironmentVariable("TENNISVISION_CLOUD_TOKEN", "User")
 $ppioApiKey = [Environment]::GetEnvironmentVariable("PPIO_API_KEY", "User")
+$ppioImage = [Environment]::GetEnvironmentVariable("TENNISVISION_PPIO_IMAGE", "User")
 if ($cloudProvider) {
     $env:TENNISVISION_CLOUD_PROVIDER = $cloudProvider
     $env:TENNISVISION_CLOUD_TOKEN = $cloudToken
     $env:PPIO_API_KEY = $ppioApiKey
+    if ($ppioImage) {
+        $env:TENNISVISION_PPIO_IMAGE = $ppioImage
+    }
 }
 if ($cloudUrl) {
     $env:TENNISVISION_CLOUD_URL = $cloudUrl
