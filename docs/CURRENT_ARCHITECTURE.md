@@ -190,11 +190,17 @@ never reuses court metadata produced for different corners.
 ## Report delivery and video rendering
 
 The interactive report is published as soon as `scene3d.json` and `rally3d.html` exist.
-The job enters `report_ready`, the browser opens the report against the original video,
-and the annotated MP4 continues rendering in the background. `report_ready` is an active,
-resumable job state: refreshing reconnects to it and another upload cannot overwrite its
-files. When encoding finishes, the player switches to the annotated video at the same
-playback time and enables the original/annotated toggle.
+The job enters `report_ready` and the browser opens the report while showing a clearly
+labelled replay-rendering state; it never presents the unannotated source as the smart
+replay. `report_ready` is an active, resumable job state: refreshing reconnects to it and
+another upload cannot overwrite its files. When encoding finishes, the annotated video
+appears and the original/annotated toggle becomes available.
+
+PPIO transport uses independently checksummed 8 MiB upload parts with bounded retry.
+The remote service assembles all verified parts before entering the same native-rate
+analysis endpoint. Generated MP4 files return through 8 MiB byte ranges. This keeps every
+request below the provider HTTP gateway's large-body risk boundary and prevents one
+network interruption from retransmitting an entire match.
 
 Rendering uses x264 `veryfast`, CRF 20 and `faststart` by default. This affects only MP4
 compression; it does not rerun or alter detection, tracking, identity, or landing results.

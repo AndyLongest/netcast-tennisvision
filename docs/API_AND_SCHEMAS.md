@@ -10,6 +10,12 @@ The GPU server sets `TENNISVISION_HOST=0.0.0.0`,
 requests without the matching bearer secret receive `401`. `GET /api/status` exposes
 `execution_target` so operations and tests can prove where inference is running.
 
+In on-demand PPIO mode, large relay-to-GPU transfers do not use `POST /api/analyze`
+directly. The relay creates an upload session, sends independently checksummed 8 MiB
+parts, completes the session, and only then enters the unchanged analysis endpoint over
+container loopback. Generated MP4 files are retrieved with 8 MiB HTTP byte ranges. A
+failed part is retried without retransmitting the whole video.
+
 ## HTTP endpoints
 
 ### `GET /api/status`
@@ -37,6 +43,18 @@ Body is the original video bytes. Required headers are `Content-Type`, `X-Filena
 display-only perspective correction. Only one job runs at a time. A repeated request with the same
 fingerprint reattaches; a different video receives `409 analysis_in_progress` and never
 overwrites the active clip.
+
+### Chunked cloud transport
+
+- `POST /api/upload/init` accepts filename, total size, video fingerprint and display
+  correction metadata. It returns an opaque upload ID, part size and part count.
+- `PUT /api/upload/chunk/{upload_id}/{index}` accepts one exact-size part and requires
+  `X-Chunk-SHA256`.
+- `POST /api/upload/complete` verifies that all parts exist with the expected total size,
+  assembles them atomically and starts analysis.
+
+These endpoints are relay-facing transport APIs. Browser uploads continue to use the
+stable `POST /api/analyze` contract against the trusted local service.
 
 ### `POST /api/court-calibration`
 

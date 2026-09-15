@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#171020" />
   <meta name="description" content="Netcast TennisVision：上传任意原生帧率的固定机位网球视频，自动生成轨迹、落点与三维复盘。" />
   <title>Netcast TennisVision · 看见每一拍，读懂整场比赛</title>
-  <link rel="stylesheet" href="styles.css?v=20260905b" />
+  <link rel="stylesheet" href="styles.css?v=20260915a" />
 </head>
 <body>
   <header class="topbar">
@@ -16,7 +16,7 @@
     </a>
     <nav class="main-nav" aria-label="主导航">
       <button class="nav-item active home-trigger">智能分析</button>
-      <button class="nav-item" data-toast="完成一次分析后，报告会保存在本机">分析记录</button>
+      <button class="nav-item" data-toast="完成一次分析后，报告会安全保存到本机">分析记录</button>
     </nav>
     <div class="top-actions">
       <span class="engine-status" title="专业比赛分析引擎已准备就绪"><i></i><span>分析引擎</span><strong>已就绪</strong></span>
@@ -34,7 +34,7 @@
         <p class="hero-lead">无需穿戴设备，无需人工标记。上传固定底线机位视频，自动获得球轨迹、每次落点、关键事件与三维比赛复盘。</p>
         <div class="hero-actions">
           <button class="hero-demo" id="heroDemoBtn"><span class="play-icon">▶</span> 立即观看真实样例</button>
-          <span class="hero-note"><i>✓</i> 数据只在本机处理</span>
+          <span class="hero-note"><i>✓</i> GPU 按任务启用 · 完成即释放</span>
         </div>
       </div>
 
@@ -70,7 +70,7 @@
         <div class="processing-visual">
           <span class="analysis-chip"><i></i> Netcast TennisVision · 智能分析</span>
           <div class="scan-court"><i class="scan-line"></i><canvas class="ambient-ball" id="ambientBall" aria-hidden="true"></canvas><b class="player p1"></b><b class="player p2"></b></div>
-          <div class="processing-proof"><strong>你可以离开这个页面</strong><span>分析会在本机继续运行</span></div>
+          <div class="processing-proof"><strong>你可以离开这个页面</strong><span>云端分析会继续，完成后自动释放算力</span></div>
         </div>
         <div class="processing-copy">
           <span class="eyebrow dark"><i></i> 专业分析正在进行</span>
@@ -122,10 +122,10 @@
       <div class="dashboard-grid">
         <article class="panel video-panel">
           <div class="panel-heading">
-            <div><span class="panel-kicker">比赛回放</span><h2>智能比赛回放</h2><p>轨迹、球员、球场和落地区域已经叠加</p></div>
+            <div><span class="panel-kicker">比赛回放</span><h2>智能比赛回放</h2><p id="replayDescription">轨迹、球员、球场和落地区域已经叠加</p></div>
             <label class="switch"><input id="overlayToggle" type="checkbox" checked /><span></span><em>显示分析标记</em></label>
           </div>
-          <div class="video-shell"><video id="analysisVideo" playsinline controls preload="metadata"></video><span class="ai-label"><i></i> 智能分析</span><div class="video-legend"><span><i class="legend-player"></i> 球员</span><span><i class="legend-ball"></i> 球与轨迹</span><span><i class="legend-court"></i> 落地区域</span></div></div>
+          <div class="video-shell"><video id="analysisVideo" playsinline controls preload="metadata"></video><span class="ai-label"><i></i> 智能分析</span><div class="video-legend"><span><i class="legend-player"></i> 球员</span><span><i class="legend-ball"></i> 球与轨迹</span><span><i class="legend-court"></i> 落地区域</span></div><div class="replay-pending" id="replayPending" hidden aria-live="polite"><div class="replay-pending-mark"><i></i><i></i><b></b></div><strong>正在生成智能比赛回放</strong><span>分析结果已经就绪，正在叠加轨迹、球员与落地区域</span><small><i></i> 云端成片处理中</small></div></div>
           <div class="event-timeline"><div class="timeline-label"><span>整场关键事件</span><span><i class="bounce-key"></i> 落地 <i class="hit-key"></i> 击球</span></div><div class="timeline-track" id="eventTimeline"><i class="playhead" id="playhead"></i></div><div class="timeline-times"><span>00:00</span><span>00:15</span><span>00:30</span><span>00:45</span><span>01:00</span></div></div>
         </article>
 
@@ -174,7 +174,7 @@
         <div><strong>Netcast TennisVision</strong><p>看见每一拍，读懂整场比赛。</p></div>
       </div>
       <div class="footer-links">
-        <div><span>产品</span><a class="home-trigger" href="#welcomeView">智能比赛分析</a><a href="#resultsView">三维复盘报告</a><button data-toast="比赛数据始终在本机处理">本机隐私处理</button></div>
+        <div><span>产品</span><a class="home-trigger" href="#welcomeView">智能比赛分析</a><a href="#resultsView">三维复盘报告</a><button data-toast="视频加密传输，结果完成后回到本机">安全云端分析</button></div>
         <div><span>社交媒体</span><button data-toast="抖音搜索：谦宇数据 · 抖音号 64226687531">抖音 · 谦宇数据</button><small>抖音号 64226687531</small><small>账号属地 · 广东</small></div>
         <div><span>研发团队</span><strong>深圳市谦宇数据有限公司</strong><small>专注于智能技术垂直落地</small><small>Netcast TennisVision</small></div>
       </div>
@@ -220,6 +220,6 @@
     <button class="primary-button dialog-ok">明白了，开始分析</button>
   </dialog>
   <script src="demo-scene.js?v=20260829a"></script>
-  <script src="app.js?v=20260905d"></script>
+  <script src="app.js?v=20260915a"></script>
 </body>
 </html>

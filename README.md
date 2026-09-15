@@ -44,10 +44,12 @@ are written to `data/outputs/`:
 - `scene3d.json` — machine-readable frame and event data;
 - `rally3d.html` — self-contained interactive 3D viewer.
 
-When the Windows user environment contains `TENNISVISION_CLOUD_URL` and
-`TENNISVISION_CLOUD_TOKEN`, `run_ui.ps1` starts a trusted local relay and all uploaded
-video inference runs on the configured GPU server. The browser never receives the cloud
-secret. The bundled example remains a local static asset.
+Production uses `TENNISVISION_CLOUD_PROVIDER=ppio`, `PPIO_API_KEY`, and
+`TENNISVISION_CLOUD_TOKEN` from the Windows user environment. The trusted local relay
+creates a temporary GPU only after receiving an upload, downloads the finished report
+and rendered video, then stops and deletes the instance on success or failure. No GPU
+instance is kept between jobs. Provider credentials never reach the browser. A fixed
+`TENNISVISION_CLOUD_URL` remains available only as a development/debug override.
 
 For development:
 

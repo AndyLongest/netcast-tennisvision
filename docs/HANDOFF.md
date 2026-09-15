@@ -3,6 +3,24 @@
 This is the canonical first page for a new engineer or coding agent. The product owner
 should not need to explain the system again.
 
+## Cloud execution lifecycle
+
+Production uploads are orchestrated by
+`src/netcast_tennisvision/cloud/ppio_lifecycle.py`. The local API receives the source,
+creates one temporary PPIO GPU from the versioned production image, mirrors progress and
+manual court calibration, downloads every report artifact, and releases the instance in
+a `finally` block. `data/cloud_runtime.json` is a crash-recovery journal: after an
+unexpected local service shutdown, the next process retries cleanup of the orphaned
+instance. Never replace this path with a permanent GPU URL; zero idle GPU billing is an
+explicit product constraint. The container command also has a two-hour hard safety cap,
+so a powered-off local relay cannot leave GPU compute running indefinitely.
+Every temporary instance removes image-baked runtime caches, prior outputs, task state,
+and camera profiles before accepting an upload. Model weights remain intact. This makes
+latency measurements representative of a new user video and prevents the bundled demo
+from receiving a misleading cache advantage.
+Video ingress and MP4 egress use checksummed 8 MiB parts with bounded retries; never
+restore a single large HTTP request through the PPIO HTTP mapping.
+
 ## Product in one paragraph
 
 Netcast TennisVision is a local-first, fixed-camera tennis analysis application. A user uploads a

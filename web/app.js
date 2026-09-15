@@ -324,6 +324,8 @@ function resetForNextAnalysis({ announce = false } = {}) {
   video.pause();
   video.removeAttribute('src');
   video.load();
+  $('#replayPending').hidden = true;
+  $('#replayDescription').textContent = '轨迹、球员、球场和落地区域已经叠加';
   $('#sceneFrame').src = 'about:blank';
   $('#videoInput').value = '';
   $$('.event-filter button').forEach((button, index) => button.classList.toggle('active', index === 0));
@@ -388,7 +390,7 @@ function adoptBackendJob(status, { resumed = false } = {}) {
   $('#processingMessage').textContent = status.stage || '正在继续分析这场比赛…';
   $('#timeHint').textContent = resumed
     ? '已接回上次进度，无需重新上传'
-    : '比赛数据只在当前电脑上处理';
+    : 'GPU 仅在本次任务期间启用，完成后自动释放';
 }
 
 async function monitorBackendJob(initialStatus, token, { resumed = false } = {}) {
@@ -816,6 +818,20 @@ function switchReportVideo(source, { preservePlayback = false } = {}) {
   }, { once: true });
 }
 
+function setReplayPending(pending) {
+  const video = $('#analysisVideo');
+  $('#replayPending').hidden = !pending;
+  $('#replayDescription').textContent = pending
+    ? '分析结果已经就绪，智能标记正在叠加'
+    : '轨迹、球员、球场和落地区域已经叠加';
+  $$('.ai-label, .video-legend').forEach((element) => { element.hidden = pending; });
+  if (pending) {
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+  }
+}
+
 async function showResults({ annotatedReady = true } = {}) {
   const assets = activeOutput();
   if (state.reportVisible) {
@@ -825,7 +841,8 @@ async function showResults({ annotatedReady = true } = {}) {
       $('#overlayToggle').disabled = false;
       $('#overlayToggle').checked = true;
       $('#completeBadge').innerHTML = '<i></i> 分析完成';
-      switchReportVideo(assets.annotated, { preservePlayback: true });
+      setReplayPending(false);
+      switchReportVideo(assets.annotated);
       toast('标注视频已生成，可以切换原始画面');
     }
     return;
@@ -837,7 +854,8 @@ async function showResults({ annotatedReady = true } = {}) {
     state.annotatedReady = annotatedReady;
     state.annotated = annotatedReady;
     state.reportVisible = true;
-    switchReportVideo(annotatedReady ? assets.annotated : OUTPUT.original);
+    setReplayPending(!annotatedReady);
+    if (annotatedReady) switchReportVideo(assets.annotated);
     $('#sceneFrame').src = `${assets.viewer}?v=${Date.now()}`;
     $('#overlayToggle').checked = annotatedReady;
     $('#overlayToggle').disabled = !annotatedReady;

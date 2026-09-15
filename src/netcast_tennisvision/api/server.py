@@ -1,4 +1,5 @@
 """Local Netcast TennisVision UI server and single-job analysis API."""
+
 from __future__ import annotations
 
 import argparse
@@ -19,6 +20,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from netcast_tennisvision.cloud.ppio_lifecycle import CloudLifecycleError, PPIOJobManager
 from netcast_tennisvision.paths import REPOSITORY_ROOT
 from netcast_tennisvision.vision.display_correction import parse_display_correction
 
@@ -30,6 +32,9 @@ VIDEO_IDENTITIES = DATA / "video_identities.json"
 CURRENT_JOB = DATA / "current_job.json"
 CALIBRATION_REQUEST = DATA / "court_calibration_request.json"
 CALIBRATION_RESPONSE = DATA / "court_calibration_response.json"
+UPLOADS = DATA / "uploads"
+UPLOAD_CHUNK_SIZE = 8 * 1024**2
+MAX_VIDEO_SIZE = 4 * 1024**3
 job_lock = threading.Lock()
 job_process: subprocess.Popen[bytes] | None = None
 ACTIVE_STATES = {"queued", "running", "needs_court_calibration", "report_ready"}
@@ -37,6 +42,8 @@ CLOUD_API_URL = os.environ.get("TENNISVISION_CLOUD_URL", "").strip().rstrip("/")
 CLOUD_API_TOKEN = os.environ.get("TENNISVISION_CLOUD_TOKEN", "").strip()
 CLOUD_TIMEOUT_SECONDS = float(os.environ.get("TENNISVISION_CLOUD_TIMEOUT", "3600"))
 CLOUD_SHARED_SECRET = os.environ.get("TENNISVISION_CLOUD_SHARED_SECRET", "").strip()
+CLOUD_PROVIDER = os.environ.get("TENNISVISION_CLOUD_PROVIDER", "").strip().lower()
+cloud_manager = PPIOJobManager(ROOT, STATUS) if CLOUD_PROVIDER == "ppio" else None
 
 
 def read_json(path: Path) -> dict[str, object]:
@@ -60,9 +67,12 @@ def status_payload() -> dict[str, object]:
     # separate file and merge it into every response so a refreshed browser can reattach.
     for key, value in read_json(CURRENT_JOB).items():
         status.setdefault(key, value)
-    status.setdefault(
-        "execution_target", os.environ.get("TENNISVISION_EXECUTION_TARGET", "local")
+    default_target = (
+        "cloud-on-demand"
+        if cloud_manager
+        else os.environ.get("TENNISVISION_EXECUTION_TARGET", "local")
     )
+    status.setdefault("execution_target", default_target)
     return status
 
 
@@ -102,7 +112,10 @@ def same_file(first: Path, second: Path) -> bool:
     if not second.exists() or first.stat().st_size != second.stat().st_size:
         return False
     with first.open("rb") as left, second.open("rb") as right:
-        return hashlib.file_digest(left, "sha256").digest() == hashlib.file_digest(right, "sha256").digest()
+        return (
+            hashlib.file_digest(left, "sha256").digest()
+            == hashlib.file_digest(right, "sha256").digest()
+        )
 
 
 def file_sha256(path: Path) -> str:
@@ -135,13 +148,27 @@ def stable_video_mtime(video: Path) -> int:
 def probe_native_fps(video: Path) -> float:
     """Read the captured frame rate without transcoding or inventing frames."""
     directory = ffmpeg_directory()
-    executable = (directory / ("ffprobe.exe" if os.name == "nt" else "ffprobe")) if directory else None
+    executable = (
+        (directory / ("ffprobe.exe" if os.name == "nt" else "ffprobe")) if directory else None
+    )
     if executable is None or not executable.exists():
         raise RuntimeError("本机未找到 ffprobe，无法检查视频帧率")
     completed = subprocess.run(
-        [str(executable), "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=avg_frame_rate", "-of", "json", str(video)],
-        capture_output=True, text=True, check=True,
+        [
+            str(executable),
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=avg_frame_rate",
+            "-of",
+            "json",
+            str(video),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
     )
     payload = json.loads(completed.stdout)
     rate = payload["streams"][0]["avg_frame_rate"]
@@ -166,7 +193,12 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Access-Control-Allow-Origin", "null" if self.headers.get("Origin") == "null" else "http://127.0.0.1:4173")
+        if cloud_manager:
+            self.send_header("X-Netcast-Execution-Target", "cloud-on-demand")
+        self.send_header(
+            "Access-Control-Allow-Origin",
+            "null" if self.headers.get("Origin") == "null" else "http://127.0.0.1:4173",
+        )
         self.end_headers()
         self.wfile.write(body)
 
@@ -308,20 +340,71 @@ class Handler(SimpleHTTPRequestHandler):
             pass
 
     def do_OPTIONS(self) -> None:
-        if urlparse(self.path).path not in {
-            "/api/status", "/api/analyze", "/api/court-calibration"
-        }:
+        request_path = urlparse(self.path).path
+        if request_path not in {
+            "/api/status",
+            "/api/analyze",
+            "/api/court-calibration",
+            "/api/upload/init",
+            "/api/upload/complete",
+        } and not request_path.startswith("/api/upload/chunk/"):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         self.send_response(HTTPStatus.NO_CONTENT)
-        self.send_header("Access-Control-Allow-Origin", "null" if self.headers.get("Origin") == "null" else "http://127.0.0.1:4173")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header(
+            "Access-Control-Allow-Origin",
+            "null" if self.headers.get("Origin") == "null" else "http://127.0.0.1:4173",
+        )
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
         self.send_header(
             "Access-Control-Allow-Headers",
             "Content-Type, X-Filename, X-Video-Fingerprint, X-Display-Correction, X-Display-Corners",
         )
         self.send_header("Access-Control-Max-Age", "600")
         self.end_headers()
+
+    def do_PUT(self) -> None:
+        """Accept one bounded, checksummed part through the public HTTP mapping."""
+        request_path = urlparse(self.path).path
+        if not self.cloud_request_authorized():
+            return
+        prefix = "/api/upload/chunk/"
+        if not request_path.startswith(prefix):
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        pieces = request_path[len(prefix) :].split("/")
+        if len(pieces) != 2 or not self.valid_upload_id(pieces[0]):
+            self.send_json({"error": "上传分片地址无效"}, HTTPStatus.BAD_REQUEST)
+            return
+        upload_id = pieces[0]
+        try:
+            index = int(pieces[1])
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            index, length = -1, 0
+        session = UPLOADS / upload_id
+        metadata = read_json(session / "metadata.json")
+        total_size = int(metadata.get("total_size", 0))
+        chunk_size = int(metadata.get("chunk_size", UPLOAD_CHUNK_SIZE))
+        chunk_count = math.ceil(total_size / chunk_size) if total_size else 0
+        expected = min(chunk_size, total_size - index * chunk_size) if 0 <= index < chunk_count else 0
+        if not metadata or expected <= 0 or length != expected:
+            self.send_json({"error": "上传分片大小或编号无效"}, HTTPStatus.BAD_REQUEST)
+            return
+        body = self.rfile.read(length)
+        if len(body) != length:
+            self.send_json({"error": "上传分片提前中断"}, HTTPStatus.BAD_REQUEST)
+            return
+        expected_hash = self.headers.get("X-Chunk-SHA256", "").lower()
+        actual_hash = hashlib.sha256(body).hexdigest()
+        if not expected_hash or not hmac.compare_digest(actual_hash, expected_hash):
+            self.send_json({"error": "上传分片校验失败"}, HTTPStatus.UNPROCESSABLE_ENTITY)
+            return
+        destination = session / f"{index:06d}.part"
+        temporary = destination.with_suffix(".part.uploading")
+        temporary.write_bytes(body)
+        os.replace(temporary, destination)
+        self.send_json({"accepted": True, "index": index, "sha256": actual_hash})
 
     def do_GET(self) -> None:
         request_path = urlparse(self.path).path
@@ -351,7 +434,23 @@ class Handler(SimpleHTTPRequestHandler):
         if CLOUD_API_URL and request_path in {"/api/analyze", "/api/court-calibration"}:
             self.proxy_cloud_request("POST")
             return
+        if request_path == "/api/upload/init":
+            self.initialize_chunked_upload()
+            return
+        if request_path == "/api/upload/complete":
+            self.complete_chunked_upload()
+            return
         if request_path == "/api/court-calibration":
+            if cloud_manager:
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < length <= 64 * 1024:
+                        raise CloudLifecycleError("球场校准数据无效")
+                    response = cloud_manager.submit_calibration(self.rfile.read(length))
+                    self.send_json(response)
+                except (ValueError, CloudLifecycleError) as exc:
+                    self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                return
             self.save_court_calibration()
             return
         if request_path != "/api/analyze":
@@ -365,28 +464,34 @@ class Handler(SimpleHTTPRequestHandler):
             if process_active or status_active:
                 resumed = resumable_job(requested_fingerprint)
                 if resumed is not None:
-                    self.send_json({
-                        "accepted": True,
-                        "resumed": True,
-                        "job_id": resumed.get("job_id"),
-                        "filename": resumed.get("filename"),
-                        "fps": resumed.get("fps"),
-                        "workload_factor": resumed.get("workload_factor", 1),
-                        "display_correction": resumed.get("display_correction"),
-                    }, HTTPStatus.ACCEPTED)
+                    self.send_json(
+                        {
+                            "accepted": True,
+                            "resumed": True,
+                            "job_id": resumed.get("job_id"),
+                            "filename": resumed.get("filename"),
+                            "fps": resumed.get("fps"),
+                            "workload_factor": resumed.get("workload_factor", 1),
+                            "display_correction": resumed.get("display_correction"),
+                        },
+                        HTTPStatus.ACCEPTED,
+                    )
                     return
-                self.send_json({
-                    "error": "另一段视频正在分析，请等待当前分析完成",
-                    "code": "analysis_in_progress",
-                    "filename": current_status.get("filename"),
-                    "progress": current_status.get("progress", 0),
-                }, HTTPStatus.CONFLICT)
+                self.send_json(
+                    {
+                        "error": "另一段视频正在分析，请等待当前分析完成",
+                        "code": "analysis_in_progress",
+                        "filename": current_status.get("filename"),
+                        "progress": current_status.get("progress", 0),
+                    },
+                    HTTPStatus.CONFLICT,
+                )
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
                 length = 0
-            if length <= 0 or length > 4 * 1024**3:
+            if length <= 0 or length > MAX_VIDEO_SIZE:
                 self.send_json({"error": "视频为空或超过 4GB"}, HTTPStatus.BAD_REQUEST)
                 return
             filename = Path(unquote(self.headers.get("X-Filename", "clip.mp4"))).name
@@ -414,8 +519,15 @@ class Handler(SimpleHTTPRequestHandler):
                     remaining -= len(chunk)
             try:
                 fps = probe_native_fps(temporary)
-            except (OSError, ValueError, KeyError, IndexError, json.JSONDecodeError,
-                    subprocess.SubprocessError, RuntimeError) as exc:
+            except (
+                OSError,
+                ValueError,
+                KeyError,
+                IndexError,
+                json.JSONDecodeError,
+                subprocess.SubprocessError,
+                RuntimeError,
+            ) as exc:
                 temporary.unlink(missing_ok=True)
                 self.send_json({"error": f"无法读取视频规格：{exc}"}, HTTPStatus.BAD_REQUEST)
                 return
@@ -423,9 +535,10 @@ class Handler(SimpleHTTPRequestHandler):
             # any valid native rate and never silently drop or invent frames.
             if not supports_native_fps(fps):
                 temporary.unlink(missing_ok=True)
-                self.send_json({
-                    "error": f"视频没有有效帧率（读到{fps!r}fps），无法建立时间轴。"
-                }, HTTPStatus.UNPROCESSABLE_ENTITY)
+                self.send_json(
+                    {"error": f"视频没有有效帧率（读到{fps!r}fps），无法建立时间轴。"},
+                    HTTPStatus.UNPROCESSABLE_ENTITY,
+                )
                 return
             clip = DATA / "clip.mp4"
             if same_file(temporary, clip):
@@ -451,33 +564,206 @@ class Handler(SimpleHTTPRequestHandler):
             }
             # Publish a self-contained queued snapshot first. Until CURRENT_JOB is replaced,
             # readers still see the new identity because status fields win during merging.
-            write_json_atomic(STATUS, {
-                "state": "queued", "progress": 1, "stage": "视频已接收，准备分析",
-                **job_metadata,
-            })
+            write_json_atomic(
+                STATUS,
+                {
+                    "state": "queued",
+                    "progress": 1,
+                    "stage": "视频已接收，准备分析",
+                    **job_metadata,
+                },
+            )
             write_json_atomic(CURRENT_JOB, job_metadata)
+            if cloud_manager:
+                try:
+                    cloud_manager.start(
+                        clip,
+                        {
+                            "X-Filename": filename,
+                            "X-Video-Fingerprint": fingerprint,
+                            "X-Display-Correction": self.headers.get("X-Display-Correction", ""),
+                            "X-Display-Corners": self.headers.get("X-Display-Corners", ""),
+                        },
+                    )
+                except CloudLifecycleError as exc:
+                    write_json_atomic(
+                        STATUS,
+                        {
+                            "state": "error",
+                            "progress": 0,
+                            "stage": "云端分析未启动",
+                            "error": str(exc),
+                            "execution_target": "cloud-on-demand",
+                        },
+                    )
+                    self.send_json(
+                        {"error": str(exc), "code": "cloud_configuration_error"},
+                        HTTPStatus.SERVICE_UNAVAILABLE,
+                    )
+                    return
+                self.send_json(
+                    {
+                        "accepted": True,
+                        "resumed": False,
+                        "job_id": job_id,
+                        "filename": filename,
+                        "fps": round(fps, 3),
+                        "high_fps": fps >= 48.0,
+                        "workload_factor": workload_factor,
+                        "video_fingerprint": fingerprint,
+                        "display_correction": display_correction,
+                        "execution_target": "cloud-on-demand",
+                    },
+                    HTTPStatus.ACCEPTED,
+                )
+                return
             environment = os.environ.copy()
             ffmpeg_dir = ffmpeg_directory()
             if ffmpeg_dir:
                 environment["PATH"] = str(ffmpeg_dir) + os.pathsep + environment.get("PATH", "")
             log_handle = LOG.open("wb")
             job_process = subprocess.Popen(
-                [sys.executable, "-m", "netcast_tennisvision.pipeline.runner"], cwd=ROOT,
-                env=environment, stdout=log_handle, stderr=subprocess.STDOUT
+                [sys.executable, "-m", "netcast_tennisvision.pipeline.runner"],
+                cwd=ROOT,
+                env=environment,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
             )
             job_metadata["pid"] = job_process.pid
             write_json_atomic(CURRENT_JOB, job_metadata)
-            self.send_json({
-                "accepted": True,
-                "resumed": False,
-                "job_id": job_id,
-                "filename": filename,
-                "fps": round(fps, 3),
-                "high_fps": fps >= 48.0,
-                "workload_factor": workload_factor,
-                "video_fingerprint": fingerprint,
-                "display_correction": display_correction,
-            }, HTTPStatus.ACCEPTED)
+            self.send_json(
+                {
+                    "accepted": True,
+                    "resumed": False,
+                    "job_id": job_id,
+                    "filename": filename,
+                    "fps": round(fps, 3),
+                    "high_fps": fps >= 48.0,
+                    "workload_factor": workload_factor,
+                    "video_fingerprint": fingerprint,
+                    "display_correction": display_correction,
+                },
+                HTTPStatus.ACCEPTED,
+            )
+
+    @staticmethod
+    def valid_upload_id(value: str) -> bool:
+        return len(value) == 32 and all(character in "0123456789abcdef" for character in value)
+
+    def read_bounded_json(self, maximum: int = 64 * 1024) -> dict[str, object]:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = 0
+        if not 0 < length <= maximum:
+            raise ValueError("请求数据大小无效")
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("请求数据格式无效") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("请求数据格式无效")
+        return payload
+
+    def initialize_chunked_upload(self) -> None:
+        """Create a resumable upload session with fixed-size independent parts."""
+        try:
+            payload = self.read_bounded_json()
+            total_size = int(payload.get("total_size", 0))
+            filename = Path(str(payload.get("filename", "clip.mp4"))).name
+            if not 0 < total_size <= MAX_VIDEO_SIZE:
+                raise ValueError("视频为空或超过 4GB")
+            if Path(filename).suffix.lower() not in {".mp4", ".mov", ".webm", ".mkv"}:
+                raise ValueError("不支持的视频格式")
+        except (TypeError, ValueError) as exc:
+            self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
+        upload_id = uuid.uuid4().hex
+        session = UPLOADS / upload_id
+        session.mkdir(parents=True, exist_ok=False)
+        metadata: dict[str, object] = {
+            "upload_id": upload_id,
+            "filename": filename,
+            "total_size": total_size,
+            "chunk_size": UPLOAD_CHUNK_SIZE,
+            "video_fingerprint": str(payload.get("video_fingerprint", "")),
+            "display_correction": str(payload.get("display_correction", "")),
+            "display_corners": str(payload.get("display_corners", "")),
+            "created_at": int(time.time()),
+        }
+        write_json_atomic(session / "metadata.json", metadata)
+        self.send_json(
+            {
+                "upload_id": upload_id,
+                "chunk_size": UPLOAD_CHUNK_SIZE,
+                "chunk_count": math.ceil(total_size / UPLOAD_CHUNK_SIZE),
+            },
+            HTTPStatus.CREATED,
+        )
+
+    def complete_chunked_upload(self) -> None:
+        """Join verified parts locally, then enter the unchanged analysis endpoint."""
+        try:
+            payload = self.read_bounded_json()
+            upload_id = str(payload.get("upload_id", ""))
+            if not self.valid_upload_id(upload_id):
+                raise ValueError("上传会话无效")
+            session = UPLOADS / upload_id
+            metadata = read_json(session / "metadata.json")
+            total_size = int(metadata.get("total_size", 0))
+            chunk_size = int(metadata.get("chunk_size", 0))
+            chunk_count = math.ceil(total_size / chunk_size) if chunk_size else 0
+            parts = [session / f"{index:06d}.part" for index in range(chunk_count)]
+            if not metadata or not parts or any(not part.is_file() for part in parts):
+                raise ValueError("视频分片尚未全部上传")
+            if sum(part.stat().st_size for part in parts) != total_size:
+                raise ValueError("视频分片总大小不一致")
+            assembled = session / "assembled.video"
+            with assembled.open("wb") as output:
+                for part in parts:
+                    with part.open("rb") as source:
+                        shutil.copyfileobj(source, output, length=1024 * 1024)
+            response_status, response_payload = self.start_assembled_upload(assembled, metadata)
+            if response_status < 300:
+                shutil.rmtree(session)
+            self.send_json(response_payload, HTTPStatus(response_status))
+        except (OSError, TypeError, ValueError) as exc:
+            self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+
+    def start_assembled_upload(
+        self, assembled: Path, metadata: dict[str, object]
+    ) -> tuple[int, dict[str, object]]:
+        """Loop a reassembled file into the stable direct-upload API inside the container."""
+        port = int(os.environ.get("TENNISVISION_PORT", "4173"))
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=CLOUD_TIMEOUT_SECONDS)
+        try:
+            connection.putrequest("POST", "/api/analyze")
+            connection.putheader("Content-Type", "application/octet-stream")
+            connection.putheader("Content-Length", str(assembled.stat().st_size))
+            connection.putheader("X-Filename", str(metadata["filename"]))
+            for source, target in (
+                ("video_fingerprint", "X-Video-Fingerprint"),
+                ("display_correction", "X-Display-Correction"),
+                ("display_corners", "X-Display-Corners"),
+            ):
+                value = str(metadata.get(source, ""))
+                if value:
+                    connection.putheader(target, value)
+            if CLOUD_SHARED_SECRET:
+                connection.putheader("Authorization", f"Bearer {CLOUD_SHARED_SECRET}")
+            connection.endheaders()
+            with assembled.open("rb") as source:
+                while chunk := source.read(1024 * 1024):
+                    connection.send(chunk)
+            response = connection.getresponse()
+            raw = response.read()
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                payload = {"error": "云端无法启动已上传的视频"}
+            return response.status, payload if isinstance(payload, dict) else {}
+        finally:
+            connection.close()
 
     def save_court_calibration(self) -> None:
         """Accept four guided clicks for the currently paused analysis job."""
@@ -508,34 +794,48 @@ class Handler(SimpleHTTPRequestHandler):
                 if not isinstance(point, list) or len(point) != 2:
                     raise ValueError("角点坐标格式不正确")
                 x, y = float(point[0]), float(point[1])
-                if not math.isfinite(x) or not math.isfinite(y) or not (0 <= x < width and 0 <= y < height):
+                if (
+                    not math.isfinite(x)
+                    or not math.isfinite(y)
+                    or not (0 <= x < width and 0 <= y < height)
+                ):
                     raise ValueError("角点超出了画面范围")
                 normalized.append([x, y])
             import numpy as np
 
             from netcast_tennisvision.vision.court_calibration import validate_manual_calibration
-            world_quad = np.array(
-                [[0, 0], [10.97, 0], [10.97, 23.77], [0, 23.77]], np.float32)
-            validate_manual_calibration(
-                normalized, (int(height), int(width)), world_quad)
+
+            world_quad = np.array([[0, 0], [10.97, 0], [10.97, 23.77], [0, 23.77]], np.float32)
+            validate_manual_calibration(normalized, (int(height), int(width)), world_quad)
         except (UnicodeDecodeError, json.JSONDecodeError, TypeError, KeyError, ValueError) as exc:
             self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
             return
         temporary = CALIBRATION_RESPONSE.with_suffix(".tmp")
-        temporary.write_text(json.dumps({
-            "request_id": request_id, "corners": normalized,
-        }, ensure_ascii=False), encoding="utf-8")
+        temporary.write_text(
+            json.dumps(
+                {
+                    "request_id": request_id,
+                    "corners": normalized,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
         os.replace(temporary, CALIBRATION_RESPONSE)
         self.send_json({"accepted": True})
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Netcast TennisVision local analysis server")
-    parser.add_argument("--port", type=int, default=int(os.environ.get("TENNISVISION_PORT", "4173")))
+    parser.add_argument(
+        "--port", type=int, default=int(os.environ.get("TENNISVISION_PORT", "4173"))
+    )
     args = parser.parse_args()
     port = args.port
     host = os.environ.get("TENNISVISION_HOST", "127.0.0.1")
     server = ThreadingHTTPServer((host, port), Handler)
+    if cloud_manager:
+        cloud_manager.recover_orphan_async()
     print(f"Netcast TennisVision: http://{host}:{port}/web/", flush=True)
     try:
         server.serve_forever()
