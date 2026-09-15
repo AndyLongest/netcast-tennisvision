@@ -5,6 +5,11 @@ remote uploads are added to the product. It deliberately accepts only the bundle
 `assets/demo/demo.mp4`, so the first measurement isolates GPU inference and rendering
 from object-storage transfer time.
 
+The first completed server measurement is recorded in
+[`PPIO_BENCHMARK_2026-09-15.md`](PPIO_BENCHMARK_2026-09-15.md). Use its first-processing
+number for capacity planning; its faster exact-video repeat intentionally includes
+persisted caches.
+
 ## Secret boundary
 
 Never commit API keys or registry passwords. The caller uses `PPIO_API_KEY` from the
