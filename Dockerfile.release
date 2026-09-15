@@ -1,0 +1,16 @@
+FROM image.ppinfra.com/prod-ahskpcitxxwcgdnfqfpu/netcast-tennisvision:production-v1
+
+# The frozen production-v1 image already contains CUDA, Python dependencies and
+# all model assets.  Release images are intentionally thin code-only overlays so
+# an on-demand worker does not have to cold-pull a second full ML runtime.
+WORKDIR /app
+COPY src ./src
+COPY web ./web
+COPY tools ./tools
+COPY pyproject.toml README.md ./
+
+ENV PYTHONPATH=/app/src
+
+RUN python tools/verify_install.py
+
+CMD ["python", "-m", "netcast_tennisvision.cloud.worker"]
