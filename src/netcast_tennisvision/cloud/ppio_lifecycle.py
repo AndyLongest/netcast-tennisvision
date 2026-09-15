@@ -114,7 +114,7 @@ class PPIOJobManager:
     def _run(self, clip: Path, upload_headers: dict[str, str]) -> None:
         instance_id: str | None = None
         try:
-            self._write_status("queued", 2, "正在启动云端算力（空闲时不会计费）")
+            self._write_status("queued", 2, "正在启动临时云端算力")
             instance_id = self._create_instance()
             with self._lock:
                 self._instance_id = instance_id
@@ -190,8 +190,18 @@ class PPIOJobManager:
 
     def _wait_for_endpoint(self, instance_id: str) -> str:
         deadline = time.monotonic() + 10 * 60
+        last_connection_error: CloudLifecycleError | None = None
         while time.monotonic() < deadline:
-            detail = self._provider_request("GET", f"/gpu/instance?instanceId={instance_id}")
+            try:
+                detail = self._provider_request("GET", f"/gpu/instance?instanceId={instance_id}")
+                last_connection_error = None
+            except CloudLifecycleError as exc:
+                # PPIO's control plane can briefly reset TLS connections while an
+                # image is being scheduled or pulled.  The instance already exists,
+                # so a failed status read must not fail the user's whole analysis.
+                last_connection_error = exc
+                time.sleep(2)
+                continue
             state = str(detail.get("status", ""))
             if state in {"error", "failed"}:
                 message = detail.get("statusError", {}).get("message", "实例启动失败")
@@ -201,6 +211,8 @@ class PPIOJobManager:
                     if state == "running":
                         return str(mapping["endpoint"]).rstrip("/")
             time.sleep(2)
+        if last_connection_error is not None:
+            raise CloudLifecycleError(f"云端 GPU 启动超时：{last_connection_error}")
         raise CloudLifecycleError("云端 GPU 启动超时")
 
     def _wait_for_service(self, remote_url: str) -> None:

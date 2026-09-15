@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from netcast_tennisvision.cloud.ppio_lifecycle import PPIOJobManager
+from netcast_tennisvision.cloud.ppio_lifecycle import CloudLifecycleError, PPIOJobManager
 
 
 def manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PPIOJobManager:
@@ -67,3 +67,27 @@ def test_new_instance_command_clears_runtime_cache_but_not_models(tmp_path, monk
     assert "find data/cache data/outputs" in captured["command"]
     assert "data/camera_profiles.json" in captured["command"]
     assert "models" not in captured["command"]
+
+
+def test_endpoint_wait_tolerates_transient_provider_disconnect(tmp_path, monkeypatch):
+    lifecycle = manager(tmp_path, monkeypatch)
+    responses = iter(
+        [
+            CloudLifecycleError("temporary TLS EOF"),
+            {
+                "status": "running",
+                "portMappings": [{"port": 8000, "endpoint": "https://worker.example"}],
+            },
+        ]
+    )
+
+    def provider_request(_method, _path):
+        result = next(responses)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(lifecycle, "_provider_request", provider_request)
+    monkeypatch.setattr("netcast_tennisvision.cloud.ppio_lifecycle.time.sleep", lambda _delay: None)
+
+    assert lifecycle._wait_for_endpoint("gpu-1") == "https://worker.example"
