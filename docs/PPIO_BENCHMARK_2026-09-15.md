@@ -48,3 +48,18 @@ the acceptance target.
 - production weights: checksummed frozen assets from `assets/manifest.json`
 - production algorithm: unchanged; native 29.9139 fps processing
 
+## Deployment state
+
+The verified stopped instance was saved to the account's private PPIO registry as
+`netcast-tennisvision:benchmark-v1`, manifest digest
+`sha256:ad55eecad0fad28a266775e644837f5b2b67a434b375340fda023c5f4126cd9d`.
+The temporary on-demand instance was then released; no GPU container instance was left
+running.
+
+A scale-to-zero Sync Endpoint was created to test cold start. PPIO accepted the endpoint,
+but the live Serverless product response reported RTX 4090 availability `0` and
+`deployable=false`. The gateway repeatedly created and removed unhealthy workers and did
+not return `/health`. The endpoint was deleted to stop retries and avoid uncontrolled
+cost. Recreate it only after the Serverless product API reports deployable capacity (or
+after selecting another benchmarked product). The private image remains available for
+that retry.
