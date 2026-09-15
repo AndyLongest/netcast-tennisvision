@@ -109,6 +109,7 @@ def test_lifecycle_sends_multiple_independent_parts(tmp_path, monkeypatch):
 
     lifecycle._upload_video("https://cloud.example", clip, {"X-Filename": "clip.mp4"})
 
+    calls.sort(key=lambda item: item[1])
     assert [len(body) for _, _, body in calls] == [8, 8, 3]
     assert [index for _, index, _ in calls] == [0, 1, 2]
 
@@ -132,3 +133,73 @@ def test_ranged_video_download_reassembles_all_parts(tmp_path, monkeypatch):
     )
 
     assert destination.read_bytes() == source
+
+
+def test_parallel_ranged_download_preserves_file_order(tmp_path, monkeypatch):
+    monkeypatch.setenv("PPIO_API_KEY", "provider-secret")
+    monkeypatch.setenv("TENNISVISION_CLOUD_TOKEN", "relay-secret")
+    monkeypatch.setenv("TENNISVISION_TRANSFER_WORKERS", "3")
+    lifecycle = PPIOJobManager(tmp_path, tmp_path / "status.json")
+    source = b"parts-can-complete-out-of-order"
+    monkeypatch.setattr(
+        "netcast_tennisvision.cloud.ppio_lifecycle.TRANSFER_CHUNK_SIZE", 5
+    )
+
+    def fetch_range(_url, _path, start, end):
+        returned_end = min(end, len(source) - 1)
+        body = source[start : returned_end + 1]
+        return 206, f"bytes {start}-{returned_end}/{len(source)}", body
+
+    monkeypatch.setattr(lifecycle, "_fetch_range", fetch_range)
+    destination = tmp_path / "parallel.mp4"
+
+    lifecycle._download_video_ranged(
+        "https://cloud.example", "/data/outputs/parallel.mp4", destination, required=True
+    )
+
+    assert destination.read_bytes() == source
+
+
+def test_camera_profiles_are_uploaded_only_when_present(tmp_path, monkeypatch):
+    monkeypatch.setenv("PPIO_API_KEY", "provider-secret")
+    monkeypatch.setenv("TENNISVISION_CLOUD_TOKEN", "relay-secret")
+    lifecycle = PPIOJobManager(tmp_path, tmp_path / "status.json")
+    profile = tmp_path / "data" / "camera_profiles.json"
+    profile.parent.mkdir(parents=True)
+    profile.write_text('{"version":1,"profiles":[]}', encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(
+        lifecycle,
+        "_remote_request",
+        lambda url, method, path, **kwargs: calls.append((url, method, path, kwargs))
+        or (200, {"accepted": True}),
+    )
+
+    lifecycle._upload_camera_profiles("https://cloud.example")
+
+    assert calls[0][2] == "/api/camera-profiles"
+    assert calls[0][3]["body"] == profile.read_bytes()
+
+
+def test_camera_profile_endpoint_accepts_bounded_profile_store(tmp_path, monkeypatch):
+    httpd, thread = start_upload_server(tmp_path, monkeypatch)
+    monkeypatch.setattr(server, "CAMERA_PROFILES", tmp_path / "camera_profiles.json")
+    connection = http.client.HTTPConnection(*httpd.server_address, timeout=5)
+    try:
+        status, response = request_json(
+            connection,
+            "POST",
+            "/api/camera-profiles",
+            {"version": 1, "profiles": []},
+        )
+        assert status == 200
+        assert response == {"accepted": True, "profiles": 0}
+        assert json.loads(server.CAMERA_PROFILES.read_text(encoding="utf-8")) == {
+            "version": 1,
+            "profiles": [],
+        }
+    finally:
+        connection.close()
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=2)

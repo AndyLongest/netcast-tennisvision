@@ -16,6 +16,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,9 @@ REMOTE_OUTPUTS = {
 }
 TRANSFER_CHUNK_SIZE = 8 * 1024**2
 TRANSFER_ATTEMPTS = 5
+DEFAULT_TRANSFER_WORKERS = 4
+MAX_TRANSFER_WORKERS = 8
+CAMERA_PROFILE_TRANSFER_LIMIT = 3 * 1024**2
 
 
 class CloudLifecycleError(RuntimeError):
@@ -48,10 +52,13 @@ class PPIOJobManager:
         self.shared_secret = os.environ.get("TENNISVISION_CLOUD_TOKEN", "").strip()
         self.image = os.environ.get(
             "TENNISVISION_PPIO_IMAGE",
-            "image.ppinfra.com/prod-ahskpcitxxwcgdnfqfpu/netcast-tennisvision:production-v7",
+            "image.ppinfra.com/prod-ahskpcitxxwcgdnfqfpu/netcast-tennisvision:production-v8",
         ).strip()
         self.product_id = os.environ.get("TENNISVISION_PPIO_PRODUCT_ID", "L40S.22c125g")
         self.cluster_id = os.environ.get("TENNISVISION_PPIO_CLUSTER_ID", "cn-south-1")
+        self.transfer_workers = self._bounded_worker_count(
+            os.environ.get("TENNISVISION_TRANSFER_WORKERS", str(DEFAULT_TRANSFER_WORKERS))
+        )
         self._lock = threading.RLock()
         self._thread: threading.Thread | None = None
         self._instance_id: str | None = None
@@ -125,6 +132,7 @@ class PPIOJobManager:
             with self._lock:
                 self._remote_url = remote_url
             self._wait_for_service(remote_url)
+            self._upload_camera_profiles(remote_url)
             self._write_status("queued", 4, "云端算力已就绪，正在上传比赛视频")
             self._upload_video(remote_url, clip, upload_headers)
             self._mirror_until_complete(remote_url)
@@ -156,7 +164,9 @@ class PPIOJobManager:
             "productId": self.product_id,
             "clusterId": self.cluster_id,
             "gpuNum": 1,
-            "rootfsSize": 100,
+            # PPIO currently caps ephemeral root filesystems at 84 GB. The runtime,
+            # models and two full-resolution videos fit comfortably inside 80 GB.
+            "rootfsSize": 80,
             "imageUrl": self.image,
             "imageAuth": "",
             "imageAuthId": "",
@@ -251,18 +261,40 @@ class PPIOJobManager:
             raise CloudLifecycleError("云端返回了无效的上传会话")
         total_size = clip.stat().st_size
         uploaded = 0
-        with clip.open("rb") as source:
+        with clip.open("rb") as source, ThreadPoolExecutor(
+            max_workers=self.transfer_workers,
+            thread_name_prefix="netcast-upload",
+        ) as executor:
+            pending: dict[Future[None], int] = {}
             index = 0
-            while chunk := source.read(chunk_size):
-                self._upload_part(remote_url, upload_id, index, chunk)
-                uploaded += len(chunk)
+
+            def submit_next() -> bool:
+                nonlocal index
+                chunk = source.read(chunk_size)
+                if not chunk:
+                    return False
+                future = executor.submit(self._upload_part, remote_url, upload_id, index, chunk)
+                pending[future] = len(chunk)
+                index += 1
+                return True
+
+            for _ in range(self.transfer_workers * 2):
+                if not submit_next():
+                    break
+            while pending:
+                completed, _ = wait(pending, return_when=FIRST_COMPLETED)
+                for future in completed:
+                    chunk_length = pending.pop(future)
+                    future.result()
+                    uploaded += chunk_length
                 progress = 4 + round(4 * uploaded / total_size)
                 self._write_status(
                     "queued",
                     progress,
-                    f"正在可靠上传比赛视频（{uploaded * 100 // total_size}%）",
+                    f"正在并行可靠上传比赛视频（{uploaded * 100 // total_size}%）",
                 )
-                index += 1
+                while len(pending) < self.transfer_workers * 2 and submit_next():
+                    pass
         completed_body = json.dumps({"upload_id": upload_id}).encode("utf-8")
         status, completed = self._remote_request(
             remote_url,
@@ -335,6 +367,12 @@ class PPIOJobManager:
                 report_downloaded = True
             if state == "complete":
                 self._download_outputs(remote_url)
+                self._download_path(
+                    remote_url,
+                    "/data/camera_profiles.json",
+                    self.root / "data" / "camera_profiles.json",
+                    required=False,
+                )
                 self._write_json(self.status_path, remote)
                 return
             self._write_json(self.status_path, remote)
@@ -398,34 +436,61 @@ class PPIOJobManager:
         temporary = destination.with_name(f".{destination.name}.cloud-download")
         destination.parent.mkdir(parents=True, exist_ok=True)
         try:
-            start = 0
-            total: int | None = None
-            with temporary.open("wb") as output:
-                while total is None or start < total:
-                    end = start + TRANSFER_CHUNK_SIZE - 1
-                    status, content_range, body = self._fetch_range(
-                        remote_url, remote_path, start, end
-                    )
-                    if status == 404 and not required:
-                        return
-                    if status != HTTPStatus.PARTIAL_CONTENT:
-                        raise CloudLifecycleError(f"云端结果不支持分片下载：{destination.name}")
-                    try:
-                        range_unit, range_value = content_range.split(" ", 1)
-                        returned, total_text = range_value.split("/", 1)
-                        returned_start, returned_end = (int(value) for value in returned.split("-", 1))
-                        parsed_total = int(total_text)
-                    except (TypeError, ValueError) as exc:
-                        raise CloudLifecycleError("云端返回了无效的下载范围") from exc
-                    if range_unit != "bytes" or returned_start != start:
-                        raise CloudLifecycleError("云端返回的下载分片顺序不正确")
-                    expected_length = returned_end - returned_start + 1
-                    if len(body) != expected_length:
-                        raise CloudLifecycleError("云端下载分片不完整")
-                    total = parsed_total
-                    output.write(body)
-                    start = returned_end + 1
-            if total is None or temporary.stat().st_size != total:
+            status, content_range, body = self._fetch_range(
+                remote_url, remote_path, 0, TRANSFER_CHUNK_SIZE - 1
+            )
+            if status == HTTPStatus.NOT_FOUND and not required:
+                return
+            if status != HTTPStatus.PARTIAL_CONTENT:
+                raise CloudLifecycleError(f"云端结果不支持分片下载：{destination.name}")
+            first_start, first_end, total = self._validated_content_range(
+                content_range, body, expected_start=0
+            )
+            with temporary.open("w+b") as output:
+                output.truncate(total)
+                output.seek(first_start)
+                output.write(body)
+                with ThreadPoolExecutor(
+                    max_workers=self.transfer_workers,
+                    thread_name_prefix="netcast-download",
+                ) as executor:
+                    pending: dict[Future[tuple[int, str, bytes]], int] = {}
+                    next_start = first_end + 1
+
+                    def submit_next() -> bool:
+                        nonlocal next_start
+                        if next_start >= total:
+                            return False
+                        start = next_start
+                        end = min(total - 1, start + TRANSFER_CHUNK_SIZE - 1)
+                        pending[executor.submit(
+                            self._fetch_range, remote_url, remote_path, start, end
+                        )] = start
+                        next_start = end + 1
+                        return True
+
+                    for _ in range(self.transfer_workers * 2):
+                        if not submit_next():
+                            break
+                    while pending:
+                        completed, _ = wait(pending, return_when=FIRST_COMPLETED)
+                        for future in completed:
+                            expected_start = pending.pop(future)
+                            part_status, part_range, part_body = future.result()
+                            if part_status != HTTPStatus.PARTIAL_CONTENT:
+                                raise CloudLifecycleError(
+                                    f"云端结果分片下载失败：{destination.name}"
+                                )
+                            returned_start, _, returned_total = self._validated_content_range(
+                                part_range, part_body, expected_start=expected_start
+                            )
+                            if returned_total != total:
+                                raise CloudLifecycleError("云端下载文件大小在传输中发生变化")
+                            output.seek(returned_start)
+                            output.write(part_body)
+                        while len(pending) < self.transfer_workers * 2 and submit_next():
+                            pass
+            if temporary.stat().st_size != total:
                 raise CloudLifecycleError("云端视频下载不完整")
             os.replace(temporary, destination)
         finally:
@@ -463,6 +528,54 @@ class PPIOJobManager:
                 connection.close()
             time.sleep(0.6 * (2**attempt))
         raise CloudLifecycleError(f"云端视频分片重试后仍下载失败：{last_error}")
+
+    def _upload_camera_profiles(self, remote_url: str) -> None:
+        """Copy local fixed-camera evidence into the isolated worker when available."""
+        profile_path = self.root / "data" / "camera_profiles.json"
+        try:
+            body = profile_path.read_bytes()
+        except OSError:
+            return
+        if not body or len(body) > CAMERA_PROFILE_TRANSFER_LIMIT:
+            return
+        try:
+            self._remote_request(
+                remote_url,
+                "POST",
+                "/api/camera-profiles",
+                body=body,
+                headers={"Content-Type": "application/json", "Content-Length": str(len(body))},
+            )
+        except (OSError, TimeoutError, http.client.HTTPException):
+            # Profile reuse is an optimization. A fresh calibration remains the safe fallback.
+            return
+
+    @staticmethod
+    def _validated_content_range(
+        content_range: str, body: bytes, *, expected_start: int
+    ) -> tuple[int, int, int]:
+        try:
+            range_unit, range_value = content_range.split(" ", 1)
+            returned, total_text = range_value.split("/", 1)
+            returned_start, returned_end = (int(value) for value in returned.split("-", 1))
+            total = int(total_text)
+        except (TypeError, ValueError) as exc:
+            raise CloudLifecycleError("云端返回了无效的下载范围") from exc
+        if range_unit != "bytes" or returned_start != expected_start:
+            raise CloudLifecycleError("云端返回的下载分片位置不正确")
+        if returned_end < returned_start or total <= returned_end:
+            raise CloudLifecycleError("云端返回的下载范围超出文件大小")
+        if len(body) != returned_end - returned_start + 1:
+            raise CloudLifecycleError("云端下载分片不完整")
+        return returned_start, returned_end, total
+
+    @staticmethod
+    def _bounded_worker_count(value: str) -> int:
+        try:
+            workers = int(value)
+        except ValueError:
+            workers = DEFAULT_TRANSFER_WORKERS
+        return max(1, min(MAX_TRANSFER_WORKERS, workers))
 
     def _remote_request(
         self,

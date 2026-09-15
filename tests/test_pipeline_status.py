@@ -1,6 +1,9 @@
 import json
 
+import pytest
+
 from netcast_tennisvision.pipeline import runner as pipeline_runner
+from netcast_tennisvision.pipeline import video_encoding
 from netcast_tennisvision.pipeline.video_encoding import raw_h264_output_args
 
 
@@ -42,6 +45,7 @@ def test_status_lock_never_aborts_analysis(tmp_path, monkeypatch):
 
 
 def test_video_encoder_uses_fast_reversible_default(monkeypatch):
+    monkeypatch.setattr(video_encoding, "_nvenc_usable", lambda: False)
     monkeypatch.delenv("NETCAST_X264_PRESET", raising=False)
     monkeypatch.delenv("NETCAST_X264_CRF", raising=False)
     args = raw_h264_output_args()
@@ -51,5 +55,22 @@ def test_video_encoder_uses_fast_reversible_default(monkeypatch):
 
 
 def test_video_encoder_can_restore_previous_preset(monkeypatch):
+    monkeypatch.setenv("NETCAST_VIDEO_ENCODER", "x264")
     monkeypatch.setenv("NETCAST_X264_PRESET", "medium")
     assert raw_h264_output_args()[3] == "medium"
+
+
+def test_video_encoder_uses_nvenc_only_after_a_successful_preflight(monkeypatch):
+    monkeypatch.setenv("NETCAST_VIDEO_ENCODER", "auto")
+    monkeypatch.setattr(video_encoding, "_nvenc_usable", lambda: True)
+
+    args = raw_h264_output_args()
+
+    assert args[args.index("-c:v") + 1] == "h264_nvenc"
+    assert args[args.index("-cq") + 1] == "20"
+
+
+def test_video_encoder_rejects_unknown_mode(monkeypatch):
+    monkeypatch.setenv("NETCAST_VIDEO_ENCODER", "mystery")
+    with pytest.raises(ValueError, match="unsupported NETCAST_VIDEO_ENCODER"):
+        raw_h264_output_args()

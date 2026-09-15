@@ -56,6 +56,14 @@ overwrites the active clip.
 These endpoints are relay-facing transport APIs. Browser uploads continue to use the
 stable `POST /api/analyze` contract against the trusted local service.
 
+### `POST /api/camera-profiles`
+
+The trusted relay may send the local user's bounded fixed-camera profile store to a new
+isolated GPU worker. The endpoint accepts profile schema version 1, at most 12 profiles
+and at most 3 MiB. A stored profile is never trusted by identity alone: the pipeline still
+requires the normal ORB/RANSAC visual match before reusing its court corners. This is an
+internal optimization endpoint, not a browser workflow.
+
 ### `POST /api/court-calibration`
 
 Accepts the current request ID and four image-space corners in near-left, near-right,

@@ -64,6 +64,7 @@ def test_new_instance_command_clears_runtime_cache_but_not_models(tmp_path, monk
     )
 
     assert lifecycle._create_instance() == "gpu-1"
+    assert captured["rootfsSize"] == 80
     assert "find data/cache data/outputs" in captured["command"]
     assert "data/camera_profiles.json" in captured["command"]
     assert "models" not in captured["command"]

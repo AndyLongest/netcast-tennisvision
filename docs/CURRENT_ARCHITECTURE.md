@@ -196,23 +196,28 @@ replay. `report_ready` is an active, resumable job state: refreshing reconnects 
 another upload cannot overwrite its files. When encoding finishes, the annotated video
 appears and the original/annotated toggle becomes available.
 
-PPIO transport uses independently checksummed 8 MiB upload parts with bounded retry.
+PPIO transport uses four concurrent, independently checksummed 8 MiB upload parts with bounded retry.
 The remote service assembles all verified parts before entering the same native-rate
-analysis endpoint. Generated MP4 files return through 8 MiB byte ranges. This keeps every
-request below the provider HTTP gateway's large-body risk boundary and prevents one
-network interruption from retransmitting an entire match.
+analysis endpoint. Generated MP4 files return through concurrent 8 MiB byte ranges and
+are written at their original offsets before the final size check. This keeps every request
+below the provider HTTP gateway's large-body risk boundary and prevents one network
+interruption from retransmitting an entire match. Set
+`TENNISVISION_TRANSFER_WORKERS=1` for the exact serial rollback.
 
 Production cloud releases use `Dockerfile.release`: a thin code overlay on the audited
 `production-v1` ML runtime. The legacy image stores frozen weights in
 `/opt/netcast/models`; the release maps that directory to the canonical `/app/models`
 path and refuses to publish unless the ball, bounce, player-segmentation and
-player-identity checkpoints are all present. The relay currently pins `production-v7`. Short PPIO control-plane TLS
+player-identity checkpoints are all present. The relay currently pins `production-v8`. Short PPIO control-plane TLS
 disconnects while an existing instance starts are retried until the startup deadline;
 instance creation itself is never blindly retried because that could allocate two GPUs.
 
-Rendering uses x264 `veryfast`, CRF 20 and `faststart` by default. This affects only MP4
-compression; it does not rerun or alter detection, tracking, identity, or landing results.
-Set `NETCAST_X264_PRESET=medium` to restore the earlier encoder setting. On the 2880x1620,
+Rendering first performs a one-frame NVENC preflight. A usable NVIDIA encoder receives the
+unchanged rendered frames with the `p4`/CQ20 quality profile; otherwise the process falls
+back to x264 `veryfast`, CRF 20 and `faststart`. This affects only MP4 compression; it does
+not rerun or alter detection, tracking, identity, or landing results. Set
+`NETCAST_VIDEO_ENCODER=x264` for the exact software-encoder rollback and
+`NETCAST_X264_PRESET=medium` for the older x264 preset. On the 2880x1620,
 2779-frame `deemo3.mp4` benchmark, final rendering fell from 370s to 239s (35.4% faster).
 The before/after `scene3d.json` SHA-256 remained identical:
 `c93f53b6748cb0f543ebf148202d7b879ed915b5c8dbf2c1e301044d9f2e3f5e`.
@@ -226,6 +231,11 @@ frame must have at least 20 geometric inliers, an inlier ratio of at least 0.55 
 than 3.5 pixels of mean alignment movement on a 640-pixel-wide verification image.
 Otherwise the normal full calibration and optional four-point confirmation remain in
 force. `TENNISVISION_CAMERA_PROFILES=0` disables reuse immediately.
+
+The on-demand relay copies the local profile store into a newly cleaned worker before the
+video and downloads its updated store afterwards. Transfer is limited to 3 MiB and is
+best-effort; failure simply performs a fresh calibration. Camera evidence never enters the
+container image and is released with the temporary instance.
 
 The profile stores the trusted normalized four corners and the clean grayscale court
 plate losslessly. It does not refit or modify the corners on later clips. On `deemo3`,

@@ -29,6 +29,7 @@ DATA = ROOT / "data"
 STATUS = DATA / "job_status.json"
 LOG = DATA / "pipeline.log"
 VIDEO_IDENTITIES = DATA / "video_identities.json"
+CAMERA_PROFILES = DATA / "camera_profiles.json"
 CURRENT_JOB = DATA / "current_job.json"
 CALIBRATION_REQUEST = DATA / "court_calibration_request.json"
 CALIBRATION_RESPONSE = DATA / "court_calibration_response.json"
@@ -453,6 +454,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             self.save_court_calibration()
             return
+        if request_path == "/api/camera-profiles":
+            self.save_camera_profiles()
+            return
         if request_path != "/api/analyze":
             self.send_error(HTTPStatus.NOT_FOUND)
             return
@@ -823,6 +827,28 @@ class Handler(SimpleHTTPRequestHandler):
         )
         os.replace(temporary, CALIBRATION_RESPONSE)
         self.send_json({"accepted": True})
+
+    def save_camera_profiles(self) -> None:
+        """Restore bounded, local fixed-camera evidence into an isolated cloud worker."""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = 0
+        if not 0 < length <= 3 * 1024**2:
+            self.send_json({"error": "固定机位资料大小无效"}, HTTPStatus.BAD_REQUEST)
+            return
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            profiles = payload.get("profiles") if isinstance(payload, dict) else None
+            if payload.get("version") != 1 or not isinstance(profiles, list):
+                raise ValueError("固定机位资料版本无效")
+            if len(profiles) > 12 or not all(isinstance(item, dict) for item in profiles):
+                raise ValueError("固定机位资料数量无效")
+        except (UnicodeDecodeError, json.JSONDecodeError, AttributeError, ValueError) as exc:
+            self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
+        write_json_atomic(CAMERA_PROFILES, payload)
+        self.send_json({"accepted": True, "profiles": len(profiles)})
 
 
 def main() -> None:

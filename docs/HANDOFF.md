@@ -15,11 +15,14 @@ instance. Never replace this path with a permanent GPU URL; zero idle GPU billin
 explicit product constraint. The container command also has a two-hour hard safety cap,
 so a powered-off local relay cannot leave GPU compute running indefinitely.
 Every temporary instance removes image-baked runtime caches, prior outputs, task state,
-and camera profiles before accepting an upload. Model weights remain intact. This makes
-latency measurements representative of a new user video and prevents the bundled demo
-from receiving a misleading cache advantage.
-Video ingress and MP4 egress use checksummed 8 MiB parts with bounded retries; never
-restore a single large HTTP request through the PPIO HTTP mapping.
+and camera profiles before accepting an upload. Model weights remain intact. The trusted
+relay then restores at most 3 MiB of the local user's fixed-camera profiles; ORB/RANSAC
+must still prove the camera is unchanged before any calibration is reused. This prevents
+the bundled demo from receiving a misleading image cache while avoiding an 80-second
+court search for a genuinely repeated camera.
+Video ingress and MP4 egress use four concurrent, checksummed 8 MiB parts with bounded
+retries. Set `TENNISVISION_TRANSFER_WORKERS=1` for the serial rollback; never restore a
+single large HTTP request through the PPIO HTTP mapping.
 
 ## Product in one paragraph
 
