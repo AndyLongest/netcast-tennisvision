@@ -57,19 +57,68 @@ def test_failed_release_keeps_recovery_journal(tmp_path, monkeypatch):
 def test_new_instance_command_clears_runtime_cache_but_not_models(tmp_path, monkeypatch):
     lifecycle = manager(tmp_path, monkeypatch)
     captured = {}
-    monkeypatch.setattr(
-        lifecycle,
-        "_provider_request",
-        lambda _method, _path, payload: captured.update(payload)
-        or {"instanceId": "gpu-1"},
-    )
+
+    def provider_request(method, _path, payload=None):
+        if method == "GET":
+            return {"data": [{"id": lifecycle.product_id, "minRootFS": 10, "maxRootFS": 63}]}
+        captured.update(payload)
+        return {"instanceId": "gpu-1"}
+
+    monkeypatch.setattr(lifecycle, "_provider_request", provider_request)
 
     assert lifecycle._create_instance() == "gpu-1"
-    assert captured["rootfsSize"] == 80
+    assert captured["rootfsSize"] == 60
     assert "find data/cache data/outputs" in captured["command"]
     assert "data/camera_profiles.json" in captured["command"]
     assert "NETCAST_X264_CRF=22" in captured["command"]
+    assert "TENNISVISION_OUTPUT_MODE=event-overlay" in captured["command"]
     assert "models" not in captured["command"]
+
+
+def test_rootfs_size_is_clamped_to_live_product_limit(tmp_path, monkeypatch):
+    lifecycle = manager(tmp_path, monkeypatch)
+    monkeypatch.setenv("TENNISVISION_PPIO_ROOTFS_GB", "80")
+    monkeypatch.setattr(
+        lifecycle,
+        "_provider_request",
+        lambda _method, _path: {
+            "data": [{"id": lifecycle.product_id, "minRootFS": 20, "maxRootFS": 48}]
+        },
+    )
+
+    assert lifecycle._rootfs_size_for_product() == 48
+
+
+def test_create_retries_new_provider_rootfs_limit_without_allocating_twice(tmp_path, monkeypatch):
+    lifecycle = manager(tmp_path, monkeypatch)
+    requested_sizes = []
+
+    def provider_request(method, _path, payload=None):
+        if method == "GET":
+            raise CloudLifecycleError("temporary product-list failure")
+        requested_sizes.append(payload["rootfsSize"])
+        if len(requested_sizes) == 1:
+            raise CloudLifecycleError("PPIO 请求失败：rootfs size must not be more than 42 GB")
+        return {"instanceId": "gpu-retried"}
+
+    monkeypatch.setattr(lifecycle, "_provider_request", provider_request)
+
+    assert lifecycle._create_instance() == "gpu-retried"
+    assert requested_sizes == [60, 42]
+
+
+def test_event_overlay_completion_does_not_require_annotated_video(tmp_path, monkeypatch):
+    lifecycle = manager(tmp_path, monkeypatch)
+    downloads = []
+    monkeypatch.setattr(
+        lifecycle,
+        "_download_path",
+        lambda _remote, path, _destination, *, required: downloads.append((path, required)),
+    )
+
+    lifecycle._download_outputs("https://worker.example", annotated_required=False)
+
+    assert ("/data/outputs/annotated_clip.mp4", False) in downloads
 
 
 def test_endpoint_wait_tolerates_transient_provider_disconnect(tmp_path, monkeypatch):

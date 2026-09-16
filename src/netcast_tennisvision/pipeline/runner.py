@@ -40,6 +40,14 @@ _STATUS_LOCK = threading.Lock()
 _STATUS_REPLACE_ATTEMPTS = 30
 
 
+def event_overlay_output_enabled() -> bool:
+    """Return whether the browser should render events instead of a baked video."""
+    return os.environ.get("TENNISVISION_OUTPUT_MODE", "annotated-video").strip().lower() in {
+        "event-overlay",
+        "landing-only",
+    }
+
+
 def read_current_display_correction() -> dict[str, object]:
     """Read the immutable display choice saved before this job was launched."""
     try:
@@ -250,6 +258,7 @@ def main() -> None:
     }
     os.chdir(ROOT)
     report_published = False
+    event_overlay_output = event_overlay_output_enabled()
     try:
         for index, cell in enumerate(notebook["cells"]):
             # Cells 23-24 are the retired clip-trained BallNet. RacketVision now supplies
@@ -270,21 +279,32 @@ def main() -> None:
                 if missing_report:
                     raise RuntimeError("报告生成结束但缺少输出：" + ", ".join(missing_report))
                 write_status(
-                    "report_ready", 96,
-                    "分析报告已生成，正在后台生成标注视频",
+                    "complete" if event_overlay_output else "report_ready",
+                    100 if event_overlay_output else 96,
+                    (
+                        "分析完成，落点由浏览器实时叠加"
+                        if event_overlay_output
+                        else "分析报告已生成，正在后台生成标注视频"
+                    ),
                     report_ready=True,
                     annotated_video_ready=False,
+                    event_overlay_ready=event_overlay_output,
                 )
                 report_published = True
+                if event_overlay_output:
+                    break
         outputs = ROOT / "data" / "outputs"
-        required = [outputs / "annotated_clip.mp4", outputs / "scene3d.json", outputs / "rally3d.html"]
+        required = [outputs / "scene3d.json", outputs / "rally3d.html"]
+        if not event_overlay_output:
+            required.insert(0, outputs / "annotated_clip.mp4")
         missing = [path.name for path in required if not path.exists()]
         if missing:
             raise RuntimeError("分析结束但缺少输出：" + ", ".join(missing))
-        write_status(
-            "complete", 100, "真实分析完成（RacketVision公开权重·纯推理）",
-            report_ready=True, annotated_video_ready=True,
-        )
+        if not event_overlay_output:
+            write_status(
+                "complete", 100, "真实分析完成（RacketVision公开权重·纯推理）",
+                report_ready=True, annotated_video_ready=True, event_overlay_ready=False,
+            )
     except Exception as exc:
         traceback.print_exc()
         write_status("error", 100, "分析失败", f"{type(exc).__name__}: {exc}")

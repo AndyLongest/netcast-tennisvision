@@ -24,7 +24,9 @@ native video
   -> hit/contact candidates
   -> competing racket-hit and ground-contact evidence
   -> sub-frame touchdown and court-zone mapping
-  -> annotated video, JSON report and 3D viewer
+  -> JSON report and 3D viewer
+  -> browser event overlay + optional WebGL perspective correction (normal)
+  -> annotated video (rollback)
 ```
 
 Tracking owns the ball trajectory. Landing logic may read it but must never create,
@@ -190,13 +192,23 @@ never reuses court metadata produced for different corners.
 ## Report delivery and video rendering
 
 The interactive report is published as soon as `scene3d.json` and `rally3d.html` exist.
-The job enters `report_ready` and the browser opens the report while showing a clearly
-labelled replay-rendering state; it never presents the unannotated source as the smart
-replay. `report_ready` is an active, resumable job state: refreshing reconnects to it and
-another upload cannot overwrite its files. When encoding finishes, the annotated video
-appears and the original/annotated toggle becomes available.
+The normal cloud command uses `TENNISVISION_OUTPUT_MODE=event-overlay`: the browser plays
+the local source and draws confirmed current-rally landing points, out crosses and the
+latest yellow landing zone from `scene3d.json`. If perspective correction is enabled,
+WebGL applies the same saved homography, protected player bands, safe scale and translation
+used by `vision/display_correction.py` before the event layer is drawn. Both modes complete
+at the former `report_ready` boundary and do not render or download a duplicate MP4.
+Set `TENNISVISION_OUTPUT_MODE=annotated-video` for the former behavior; in that mode
+`report_ready` remains active and resumable while encoding finishes.
 
 PPIO transport uses four concurrent, independently checksummed 8 MiB upload parts with bounded retry.
+Before creating an instance, the relay reads the selected PPIO product's live
+`minRootFS`/`maxRootFS` constraints and clamps its conservative 60 GB target into that
+range. If inventory changes between lookup and creation, a size-validation rejection is
+retried once at the newly reported limit; such a rejected request has not allocated a
+GPU and is not billable. A running job is reattached by video fingerprint after a
+browser refresh; the temporary GPU itself is released when that job completes or fails
+so idle capacity is never kept merely for reuse.
 The remote service assembles all verified parts before entering the same native-rate
 analysis endpoint. Generated MP4 files return through concurrent 8 MiB byte ranges and
 are written at their original offsets before the final size check. This keeps every request
@@ -291,6 +303,20 @@ features. Stride two removed two racket-contact events on `demo`; TensorRT offer
 about 2.5% person-model gain on this RTX 3050 Ti and changed downstream events. Both were
 removed. Production remains full-frame PyTorch person inference and native-frame-rate
 RacketVision ball inference.
+
+Ball-backend A/B on the RTX 3050 Ti measured a four-frame-batch PyTorch FP16 call at
+124.4 ms. ONNX Runtime CUDA FP16 took 796.6 ms (6.4× slower) with maximum heatmap
+difference 0.000381. The advertised TensorRT provider could not load because its runtime
+libraries were absent and fell back to CPU. Neither backend is used. The optional harness
+is `tools/benchmark_ball_backends.py`; its dependencies are not application dependencies.
+
+Skipping baked replay composition is independent of those rejected inference changes.
+On local `demo`, event-overlay execution ended at 134.4s without rendering. On recorded
+cloud `deemo2`, the equivalent report boundary was 304.4s versus 497.8s complete: a
+projected 193.3s / 38.8% reduction in user-visible wait. A fresh local demo run produced
+28 bounces and 32 hits versus the checked-in 29/35 reference asset; because the branch
+occurs only after `scene3d.json` is written, this is a pre-existing fresh-run
+reproducibility discrepancy, not an output-mode accuracy change.
 
 ### Uncached end-to-end timing
 

@@ -40,14 +40,15 @@ For a non-technical operator on Windows:
 Then open the shown local address, upload a video, or choose the bundled example. Outputs
 are written to `data/outputs/`:
 
-- `annotated_clip.mp4` — annotated review video;
+- `annotated_clip.mp4` — optional baked review video (rollback path);
 - `scene3d.json` — machine-readable frame and event data;
 - `rally3d.html` — self-contained interactive 3D viewer.
 
 Production uses `TENNISVISION_CLOUD_PROVIDER=ppio`, `PPIO_API_KEY`, and
 `TENNISVISION_CLOUD_TOKEN` from the Windows user environment. The trusted local relay
-creates a temporary GPU only after receiving an upload, downloads the finished report
-and rendered video, then stops and deletes the instance on success or failure. No GPU
+creates a temporary GPU only after receiving an upload, downloads the finished report,
+then stops and deletes the instance on success or failure. The normal path draws landing
+events over the local source video in the browser and does not wait for a second MP4. No GPU
 instance is kept between jobs. Provider credentials never reach the browser. A fixed
 `TENNISVISION_CLOUD_URL` remains available only as a development/debug override.
 
@@ -94,7 +95,9 @@ video
        -> competing racket-hit / ground-contact evidence (events/contact_hypothesis.py)
   -> sub-frame touchdown fit (events/landing_detector.py)
   -> tennis sequence audit (events/bounce_sequence.py)
-  -> annotated video + JSON + 3D viewer (notebook pass B)
+  -> JSON + 3D viewer (notebook pass B)
+  -> browser event overlay and optional real-time perspective warp (normal)
+  -> baked annotated video (rollback)
 ```
 
 The dependency direction is intentional: landing logic consumes the trajectory and may

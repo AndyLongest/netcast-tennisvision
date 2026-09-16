@@ -30,8 +30,8 @@ Netcast TennisVision is a local-first, fixed-camera tennis analysis application.
 behind-the-baseline match video. The backend runs frozen computer-vision models at the
 video's native frame rate, establishes one stable court geometry, tracks one physical
 ball through short occlusions, distinguishes racket hits from ground contacts, maps
-confirmed touchdowns into court zones, and produces an annotated replay, current-rally
-minimap and interactive 3D report. The browser is intentionally non-technical.
+confirmed touchdowns into court zones, and produces a current-rally minimap and
+interactive 3D report. The browser is intentionally non-technical.
 
 ## Supported production path
 
@@ -44,8 +44,15 @@ web/app.js
   -> vision/player_identity.py (OSNet-AIN labels only; never feeds ball tracking)
   -> events/contact_hypothesis.py + events/landing_event_detector.py
   -> events/landing_detector.py + events/bounce_sequence.py
-  -> data/outputs/{annotated_clip.mp4,scene3d.json,rally3d.html}
+  -> data/outputs/{scene3d.json,rally3d.html}
+  -> browser current-rally landing overlay
 ```
+
+Production cloud jobs set `TENNISVISION_OUTPUT_MODE=event-overlay`, so they stop after the
+structured report and avoid a duplicate annotated-video render/download. The source stays
+local and the browser overlay comes from confirmed events. Perspective correction uses
+the same saved homography in a WebGL video layer, so it also avoids baking a second MP4.
+The old `annotated_clip.mp4` path remains available only with `annotated-video`.
 
 Only the RacketVision MS-TrackNetV3 candidate path is supported. Uploaded videos are pure
 inference. Never restore the retired per-video BallNet training path.

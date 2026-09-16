@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#171020" />
   <meta name="description" content="Netcast TennisVision：上传任意原生帧率的固定机位网球视频，自动生成轨迹、落点与三维复盘。" />
   <title>Netcast TennisVision · 看见每一拍，读懂整场比赛</title>
-  <link rel="stylesheet" href="styles.css?v=20260915a" />
+  <link rel="stylesheet" href="styles.css?v=20260916b" />
 </head>
 <body>
   <header class="topbar">
@@ -125,7 +125,7 @@
             <div><span class="panel-kicker">比赛回放</span><h2>智能比赛回放</h2><p id="replayDescription">轨迹、球员、球场和落地区域已经叠加</p></div>
             <label class="switch"><input id="overlayToggle" type="checkbox" checked /><span></span><em>显示分析标记</em></label>
           </div>
-          <div class="video-shell"><video id="analysisVideo" playsinline controls preload="metadata"></video><span class="ai-label"><i></i> 智能分析</span><div class="video-legend"><span><i class="legend-player"></i> 球员</span><span><i class="legend-ball"></i> 球与轨迹</span><span><i class="legend-court"></i> 落地区域</span></div><div class="replay-pending" id="replayPending" hidden aria-live="polite"><div class="replay-pending-mark"><i></i><i></i><b></b></div><strong>正在生成智能比赛回放</strong><span>分析结果已经就绪，正在叠加轨迹、球员与落地区域</span><small><i></i> 云端成片处理中</small></div></div>
+          <div class="video-shell"><video id="analysisVideo" playsinline controls preload="metadata"></video><canvas id="correctedVideoCanvas" aria-label="实时透视矫正比赛画面" hidden></canvas><canvas id="eventOverlay" aria-hidden="true"></canvas><span class="ai-label"><i></i> 智能分析</span><div class="video-legend"><span><i class="legend-player"></i> 球员</span><span><i class="legend-ball"></i> 球与轨迹</span><span><i class="legend-court"></i> 落地区域</span></div><div class="corrected-video-controls" id="correctedVideoControls" hidden><button id="correctedPlayButton" type="button" aria-label="播放">▶</button><input id="correctedSeek" type="range" min="0" max="1000" value="0" aria-label="视频进度" /><time id="correctedTime">00:00 / 00:00</time><button id="correctedFullscreen" type="button" aria-label="全屏">⛶</button></div><div class="replay-pending" id="replayPending" hidden aria-live="polite"><div class="replay-pending-mark"><i></i><i></i><b></b></div><strong>正在生成智能比赛回放</strong><span>分析结果已经就绪，正在叠加轨迹、球员与落地区域</span><small><i></i> 云端成片处理中</small></div></div>
           <div class="event-timeline"><div class="timeline-label"><span>整场关键事件</span><span><i class="bounce-key"></i> 落地 <i class="hit-key"></i> 击球</span></div><div class="timeline-track" id="eventTimeline"><i class="playhead" id="playhead"></i></div><div class="timeline-times"><span>00:00</span><span>00:15</span><span>00:30</span><span>00:45</span><span>01:00</span></div></div>
         </article>
 
@@ -136,7 +136,7 @@
         </article>
 
         <article class="panel heatmap-panel">
-          <div class="panel-heading"><div><span class="panel-kicker">落点地图</span><h2>落点分布</h2><p>界内落点为荧光绿，出界为红叉</p></div><span class="live-pill"><i></i> 真实坐标</span></div>
+          <div class="panel-heading"><div><span class="panel-kicker">落点地图</span><h2>落点分布</h2><p>界内落点为荧光绿，出界与下网为红叉</p></div><span class="live-pill"><i></i> 真实坐标</span></div>
           <div class="heatmap-wrap"><canvas id="heatmapCanvas"></canvas><div class="court-label far">远端</div><div class="court-label near">近端</div></div>
           <div class="heatmap-summary"><div><span>最常落点</span><strong id="heatDominant">近端后场</strong></div><div><span>界内率</span><strong id="heatInRate">97%</strong></div><div><span>平均纵深</span><strong id="averageDepth">9.4 米</strong></div></div>
         </article>
@@ -220,6 +220,6 @@
     <button class="primary-button dialog-ok">明白了，开始分析</button>
   </dialog>
   <script src="demo-scene.js?v=20260829a"></script>
-  <script src="app.js?v=20260915a"></script>
+  <script src="app.js?v=20260916b"></script>
 </body>
 </html>

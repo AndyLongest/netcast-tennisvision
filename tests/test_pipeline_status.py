@@ -44,6 +44,15 @@ def test_status_lock_never_aborts_analysis(tmp_path, monkeypatch):
     assert not list(tmp_path.glob("*.tmp"))
 
 
+def test_event_overlay_output_is_explicit_and_reversible(monkeypatch):
+    monkeypatch.delenv("TENNISVISION_OUTPUT_MODE", raising=False)
+    assert not pipeline_runner.event_overlay_output_enabled()
+    monkeypatch.setenv("TENNISVISION_OUTPUT_MODE", "event-overlay")
+    assert pipeline_runner.event_overlay_output_enabled()
+    monkeypatch.setenv("TENNISVISION_OUTPUT_MODE", "annotated-video")
+    assert not pipeline_runner.event_overlay_output_enabled()
+
+
 def test_video_encoder_uses_fast_reversible_default(monkeypatch):
     monkeypatch.setattr(video_encoding, "_nvenc_usable", lambda: False)
     monkeypatch.delenv("NETCAST_X264_PRESET", raising=False)

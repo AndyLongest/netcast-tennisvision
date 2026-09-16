@@ -48,7 +48,7 @@ const ACTIVE_BACKEND_STATES = new Set(['queued', 'running', 'needs_court_calibra
 let state = {
   isDemo: true, generated: true, name: '真实比赛样例', duration: 0,
   events: [], scene: null, objectUrl: null, file: null, annotated: true,
-  annotatedReady: true, reportVisible: false,
+  annotatedReady: true, eventOverlayReady: false, reportVisible: false,
   displayCorrection: { enabled: false, strength: 0, corners: null },
 };
 let toastTimer;
@@ -321,9 +321,12 @@ function resetForNextAnalysis({ announce = false } = {}) {
   clearTimeout(demoResultTimer);
   reportLoadToken += 1;
   const video = $('#analysisVideo');
+  disableBrowserCorrection();
   video.pause();
   video.removeAttribute('src');
   video.load();
+  const overlay = $('#eventOverlay');
+  overlay.getContext('2d').clearRect(0, 0, overlay.width, overlay.height);
   $('#replayPending').hidden = true;
   $('#replayDescription').textContent = '轨迹、球员、球场和落地区域已经叠加';
   $('#sceneFrame').src = 'about:blank';
@@ -333,7 +336,7 @@ function resetForNextAnalysis({ announce = false } = {}) {
   state = {
     isDemo: true, generated: true, name: '真实比赛样例', duration: 0,
     events: [], scene: null, objectUrl: null, file: null, annotated: true,
-    annotatedReady: true, reportVisible: false, renderingVideo: false,
+    annotatedReady: true, eventOverlayReady: false, reportVisible: false, renderingVideo: false,
     displayCorrection: { enabled: false, strength: 0, corners: null },
   };
   setView('welcome');
@@ -379,6 +382,7 @@ function adoptBackendJob(status, { resumed = false } = {}) {
     file: null,
     annotated: false,
     annotatedReady: false,
+    eventOverlayReady: Boolean(status.event_overlay_ready),
     reportVisible: false,
     renderingVideo: status.state === 'report_ready',
     jobId: status.job_id || null,
@@ -414,7 +418,10 @@ async function monitorBackendJob(initialStatus, token, { resumed = false } = {})
     if (status.state === 'complete') {
       state.generated = true;
       state.renderingVideo = false;
-      await showResults({ annotatedReady: true });
+      await showResults({
+        annotatedReady: Boolean(status.annotated_video_ready),
+        eventOverlayReady: Boolean(status.event_overlay_ready),
+      });
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 1800));
@@ -511,6 +518,145 @@ function fitHomographyToFrame(matrix, width, height, courtPoints) {
   const translateX = translation(minimumX, maximumX, width);
   const translateY = translation(minimumY, maximumY, height);
   return multiplyHomographies([scale, 0, translateX, 0, scale, translateY, 0, 0, 1], matrix);
+}
+
+function invertHomography(matrix) {
+  const [a, b, c, d, e, f, g, h, i] = matrix;
+  const determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+  if (!Number.isFinite(determinant) || Math.abs(determinant) < 1e-10) {
+    throw new Error('透视矩阵无效，请重新标记球场四角');
+  }
+  return [
+    (e * i - f * h) / determinant, (c * h - b * i) / determinant, (b * f - c * e) / determinant,
+    (f * g - d * i) / determinant, (a * i - c * g) / determinant, (c * d - a * f) / determinant,
+    (d * h - e * g) / determinant, (b * g - a * h) / determinant, (a * e - b * d) / determinant,
+  ];
+}
+
+const browserCorrection = {
+  gl: null, program: null, texture: null, inverseLocation: null, sizeLocation: null,
+  frameHandle: null, active: false,
+};
+
+function compileShader(gl, type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source); gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    const message = gl.getShaderInfoLog(shader); gl.deleteShader(shader); throw new Error(message);
+  }
+  return shader;
+}
+
+function initializeCorrectionRenderer() {
+  if (browserCorrection.gl) return browserCorrection;
+  const canvas = $('#correctedVideoCanvas');
+  const gl = canvas.getContext('webgl', { alpha: false, antialias: false });
+  if (!gl) throw new Error('当前浏览器无法启用实时透视矫正');
+  const vertex = compileShader(gl, gl.VERTEX_SHADER, `
+    attribute vec2 position; varying vec2 targetUv;
+    void main(){ targetUv=vec2(position.x,1.0-position.y); gl_Position=vec4(position*2.0-1.0,0.0,1.0); }
+  `);
+  const fragment = compileShader(gl, gl.FRAGMENT_SHADER, `
+    precision highp float; varying vec2 targetUv; uniform sampler2D frame;
+    uniform mat3 inverseWarp; uniform vec2 frameSize;
+    void main(){
+      vec3 source=inverseWarp*vec3(targetUv*frameSize,1.0);
+      vec2 uv=clamp(source.xy/source.z/frameSize,vec2(0.0),vec2(1.0));
+      gl_FragColor=texture2D(frame,vec2(uv.x,1.0-uv.y));
+    }
+  `);
+  const program = gl.createProgram();
+  gl.attachShader(program, vertex); gl.attachShader(program, fragment); gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
+  gl.useProgram(program);
+  const buffer = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1]), gl.STATIC_DRAW);
+  const position = gl.getAttribLocation(program, 'position');
+  gl.enableVertexAttribArray(position); gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
+  const texture = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  Object.assign(browserCorrection, {
+    gl, program, texture,
+    inverseLocation: gl.getUniformLocation(program, 'inverseWarp'),
+    sizeLocation: gl.getUniformLocation(program, 'frameSize'),
+  });
+  return browserCorrection;
+}
+
+function correctionMatrixForVideo(video) {
+  const config = state.displayCorrection;
+  if (!config?.enabled || !Array.isArray(config.corners) || config.corners.length !== 4) return null;
+  const width = video.videoWidth, height = video.videoHeight;
+  const points = config.corners.map(([x, y]) => [x * width, y * height]);
+  const courtMatrix = homographyFromQuads(points, correctedTarget(points, config.strength));
+  return fitHomographyToFrame(courtMatrix, width, height, points);
+}
+
+function updateCorrectedControls() {
+  const video = $('#analysisVideo');
+  $('#correctedPlayButton').textContent = video.paused ? '▶' : '❚❚';
+  $('#correctedPlayButton').setAttribute('aria-label', video.paused ? '播放' : '暂停');
+  $('#correctedSeek').value = String(Math.round(1000 * video.currentTime / Math.max(video.duration || 0, 0.001)));
+  $('#correctedTime').textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
+}
+
+function drawCorrectedVideoFrame() {
+  const video = $('#analysisVideo');
+  if (!browserCorrection.active || video.readyState < 2) return;
+  try {
+    const renderer = initializeCorrectionRenderer();
+    const canvas = $('#correctedVideoCanvas');
+    if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+      canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+      renderer.gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    const inverse = invertHomography(correctionMatrixForVideo(video));
+    const columnMajor = new Float32Array([
+      inverse[0], inverse[3], inverse[6], inverse[1], inverse[4], inverse[7], inverse[2], inverse[5], inverse[8],
+    ]);
+    const gl = renderer.gl; gl.useProgram(renderer.program); gl.bindTexture(gl.TEXTURE_2D, renderer.texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+    gl.uniformMatrix3fv(renderer.inverseLocation, false, columnMajor);
+    gl.uniform2f(renderer.sizeLocation, video.videoWidth, video.videoHeight);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    updateCorrectedControls();
+  } catch (error) {
+    disableBrowserCorrection(); toast(`实时透视矫正失败：${error.message}`);
+  }
+}
+
+function scheduleCorrectedFrame() {
+  if (!browserCorrection.active) return;
+  drawCorrectedVideoFrame();
+  const video = $('#analysisVideo');
+  browserCorrection.frameHandle = video.requestVideoFrameCallback
+    ? video.requestVideoFrameCallback(scheduleCorrectedFrame)
+    : requestAnimationFrame(scheduleCorrectedFrame);
+}
+
+function disableBrowserCorrection() {
+  const video = $('#analysisVideo'), shell = video.closest('.video-shell');
+  browserCorrection.active = false;
+  if (browserCorrection.frameHandle !== null) {
+    if (video.cancelVideoFrameCallback) video.cancelVideoFrameCallback(browserCorrection.frameHandle);
+    else cancelAnimationFrame(browserCorrection.frameHandle);
+  }
+  browserCorrection.frameHandle = null; shell.classList.remove('browser-corrected');
+  $('#correctedVideoCanvas').hidden = true; $('#correctedVideoControls').hidden = true;
+  video.controls = true;
+}
+
+function enableBrowserCorrection() {
+  const video = $('#analysisVideo');
+  if (!state.eventOverlayReady || !state.displayCorrection?.enabled) { disableBrowserCorrection(); return; }
+  initializeCorrectionRenderer(); browserCorrection.active = true;
+  video.controls = false; video.closest('.video-shell').classList.add('browser-corrected');
+  $('#correctedVideoCanvas').hidden = false; $('#correctedVideoControls').hidden = false;
+  scheduleCorrectedFrame();
 }
 
 function drawWarpTriangle(ctx, source, sourceTriangle, targetTriangle) {
@@ -629,7 +775,7 @@ function selectFile(file) {
   state = {
     ...state, isDemo: false, generated: false, name: file.name.replace(/\.[^.]+$/, ''),
     duration: 0, events: [], scene: null, file, objectUrl: URL.createObjectURL(file), annotated: false,
-    annotatedReady: false, reportVisible: false, renderingVideo: false,
+    annotatedReady: false, eventOverlayReady: false, reportVisible: false, renderingVideo: false,
   };
   openDisplayCorrection(file);
 }
@@ -638,7 +784,7 @@ function startDemo() {
   state = {
     ...state, isDemo: true, generated: true, name: '真实比赛样例', duration: 0,
     events: [], scene: null, file: null, annotated: true,
-    annotatedReady: true, reportVisible: false, renderingVideo: false,
+    annotatedReady: true, eventOverlayReady: false, reportVisible: false, renderingVideo: false,
     displayCorrection: { enabled: false, strength: 0, corners: null },
   };
   startAnalysis();
@@ -790,21 +936,36 @@ async function loadScene(path) {
   if (lastError) throw lastError;
   }
   state.duration = state.scene.n_frames / state.scene.fps;
+  if (!Array.isArray(state.scene.net_hits)) {
+    state.scene.net_hits = (state.scene.frames || []).flatMap((frame, index) => (
+      frame?.e === 'net_hit' && Array.isArray(frame.b)
+        ? [{ frame: index, decision_frame: index, t: index / state.scene.fps,
+          x: frame.b[0], y: state.scene.court?.net_y ?? 11.885,
+          rally_id: null, outcome: 'net' }]
+        : []
+    ));
+  }
   const bounces = state.scene.bounces.map((bounce, index) => ({
     id: `b${index}`, number: index + 1, type: 'bounce', time: bounce.t,
     zone: ZONES[bounce.zone] || bounce.zone, rawZone: bounce.zone,
     x: bounce.x, y: bounce.y, confidence: bounce.landing_confidence,
-    playerId: bounce.player_id || null,
+    playerId: bounce.player_id || null, rallyId: bounce.rally_id ?? null,
   }));
   const hits = state.scene.hits.map((hit, index) => ({
     id: `h${index}`, number: index + 1, type: 'hit', time: hit.t, zone: '球员击球',
     playerId: hit.player_id || null,
   }));
-  state.events = [...bounces, ...hits].sort((a, b) => a.time - b.time);
+  const netHits = state.scene.net_hits.map((event, index) => ({
+    id: `n${index}`, number: index + 1, type: 'net', time: event.t,
+    zone: '下网', rawZone: 'Net', x: event.x, y: event.y,
+    playerId: event.player_id || null, rallyId: event.rally_id ?? null,
+  }));
+  state.events = [...bounces, ...hits, ...netHits].sort((a, b) => a.time - b.time);
 }
 
 function switchReportVideo(source, { preservePlayback = false } = {}) {
   const video = $('#analysisVideo');
+  disableBrowserCorrection();
   const time = preservePlayback ? video.currentTime : 0;
   const wasPlaying = preservePlayback && !video.paused;
   video.src = `${source}?v=${Date.now()}`;
@@ -814,6 +975,7 @@ function switchReportVideo(source, { preservePlayback = false } = {}) {
     updateMeta();
     buildEvents();
     renderAll();
+    if (state.eventOverlayReady && state.displayCorrection?.enabled) enableBrowserCorrection();
     if (wasPlaying) video.play().catch(() => {});
   }, { once: true });
 }
@@ -832,9 +994,22 @@ function setReplayPending(pending) {
   }
 }
 
-async function showResults({ annotatedReady = true } = {}) {
+async function showResults({ annotatedReady = true, eventOverlayReady = false } = {}) {
   const assets = activeOutput();
   if (state.reportVisible) {
+    if (eventOverlayReady) {
+      state.eventOverlayReady = true;
+      state.annotated = true;
+      $('#overlayToggle').disabled = false;
+      $('#overlayToggle').checked = true;
+      $('#completeBadge').innerHTML = '<i></i> 分析完成';
+      setReplayPending(false);
+      if (!$('#analysisVideo').getAttribute('src')) {
+        switchReportVideo(state.isDemo ? DEMO_OUTPUT.original : OUTPUT.original);
+      }
+      drawEventOverlay();
+      return;
+    }
     if (annotatedReady && !state.annotatedReady) {
       state.annotatedReady = true;
       state.annotated = true;
@@ -852,16 +1027,18 @@ async function showResults({ annotatedReady = true } = {}) {
     await loadScene(assets.scene);
     if (loadToken !== reportLoadToken) return;
     state.annotatedReady = annotatedReady;
-    state.annotated = annotatedReady;
+    state.eventOverlayReady = eventOverlayReady;
     state.reportVisible = true;
-    setReplayPending(!annotatedReady);
+    state.annotated = annotatedReady || eventOverlayReady;
+    setReplayPending(!annotatedReady && !eventOverlayReady);
     if (annotatedReady) switchReportVideo(assets.annotated);
+    else if (eventOverlayReady) switchReportVideo(state.isDemo ? DEMO_OUTPUT.original : OUTPUT.original);
     $('#sceneFrame').src = `${assets.viewer}?v=${Date.now()}`;
-    $('#overlayToggle').checked = annotatedReady;
-    $('#overlayToggle').disabled = !annotatedReady;
+    $('#overlayToggle').checked = annotatedReady || eventOverlayReady;
+    $('#overlayToggle').disabled = !annotatedReady && !eventOverlayReady;
     applyRealMetrics();
     $('#reportTitle').textContent = `${state.name} · 智能复盘`;
-    $('#completeBadge').innerHTML = annotatedReady
+    $('#completeBadge').innerHTML = (annotatedReady || eventOverlayReady)
       ? '<i></i> 分析完成'
       : '<i></i> 报告已生成 · 标注视频生成中';
     $('#previewNotice').hidden = true;
@@ -945,7 +1122,9 @@ function buildEvents(filter = 'all') {
     const isOut = event.rawZone === 'Out';
     button.className = `event-item ${event.type}${isOut ? ' out' : ''}`;
     const player = event.playerId ? ` · 球员 ${event.playerId}` : '';
-    button.innerHTML = `<span class="event-symbol">${event.type === 'bounce' ? (isOut ? '×' : '⌄') : '✦'}</span><span><strong>${event.type === 'bounce' ? `第 ${event.number} 次落地` : `第 ${event.number} 次击球`}</strong><small>${event.zone}${player}</small></span><time>${formatTime(event.time)}</time>`;
+    const symbol = event.type === 'net' ? '×' : event.type === 'bounce' ? (isOut ? '×' : '⌄') : '✦';
+    const label = event.type === 'net' ? `第 ${event.number} 次下网` : event.type === 'bounce' ? `第 ${event.number} 次落地` : `第 ${event.number} 次击球`;
+    button.innerHTML = `<span class="event-symbol">${symbol}</span><span><strong>${label}</strong><small>${event.zone}${player}</small></span><time>${formatTime(event.time)}</time>`;
     button.addEventListener('click', () => seek(event));
     list.appendChild(button);
   });
@@ -953,7 +1132,7 @@ function buildEvents(filter = 'all') {
     const marker = document.createElement('button');
     marker.className = `event-marker ${event.type}${event.rawZone === 'Out' ? ' out' : ''}`;
     marker.style.left = `${Math.min(100, event.time / Math.max(state.duration, 1) * 100)}%`;
-    marker.title = `${event.type === 'bounce' ? event.zone : '击球'} · ${formatTime(event.time)}`;
+    marker.title = `${event.type === 'net' ? '下网' : event.type === 'bounce' ? event.zone : '击球'} · ${formatTime(event.time)}`;
     marker.setAttribute('aria-label', marker.title);
     marker.addEventListener('click', () => seek(event));
     timeline.appendChild(marker);
@@ -976,6 +1155,75 @@ function sizeCanvas(canvas) {
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   return { ctx, width: rect.width, height: rect.height };
+}
+
+function drawRedCross(ctx, x, y, radius = 6) {
+  ctx.save();
+  ctx.strokeStyle = '#ff665e'; ctx.shadowColor = 'rgba(255,80,72,.8)';
+  ctx.shadowBlur = 12; ctx.lineWidth = 3; ctx.beginPath();
+  ctx.moveTo(x - radius, y - radius); ctx.lineTo(x + radius, y + radius);
+  ctx.moveTo(x + radius, y - radius); ctx.lineTo(x - radius, y + radius); ctx.stroke();
+  ctx.restore();
+}
+
+function drawEventOverlay() {
+  const canvas = $('#eventOverlay');
+  const { ctx, width, height } = sizeCanvas(canvas);
+  ctx.clearRect(0, 0, width, height);
+  if (!state.eventOverlayReady || !state.annotated || !state.scene) return;
+  const now = $('#analysisVideo').currentTime || 0;
+  const latest = [
+    ...state.scene.bounces.map((event) => ({ ...event, eventKind: 'bounce' })),
+    ...(state.scene.net_hits || []).map((event) => ({ ...event, eventKind: 'net' })),
+  ]
+    .filter((event) => event.t <= now && now - event.t <= 1.15)
+    .sort((a, b) => b.t - a.t)[0];
+  if (!latest) return;
+  const mapWidth = Math.min(154, width * 0.25), mapHeight = mapWidth * 1.62;
+  const left = width - mapWidth - 18, top = height - mapHeight - 38;
+  ctx.save();
+  ctx.fillStyle = 'rgba(9, 14, 13, .82)'; ctx.strokeStyle = 'rgba(255,255,255,.25)';
+  ctx.lineWidth = 1; ctx.beginPath(); ctx.roundRect(left, top, mapWidth, mapHeight, 10); ctx.fill(); ctx.stroke();
+  const pad = 14, x0 = left + pad, x1 = left + mapWidth - pad, y0 = top + pad, y1 = top + mapHeight - pad;
+  const px = (x) => x0 + (x / 10.97) * (x1 - x0);
+  const py = (y) => y1 - (y / 23.77) * (y1 - y0);
+  ctx.strokeStyle = 'rgba(222,255,184,.9)'; ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+  ctx.beginPath(); ctx.moveTo(x0, py(11.885)); ctx.lineTo(x1, py(11.885));
+  ctx.moveTo(x0, py(5.485)); ctx.lineTo(x1, py(5.485));
+  ctx.moveTo(x0, py(18.285)); ctx.lineTo(x1, py(18.285));
+  ctx.moveTo(px(5.485), py(5.485)); ctx.lineTo(px(5.485), py(18.285)); ctx.stroke();
+  const zoneBounds = {
+    'Far Backcourt': [1.37, 18.285, 9.60, 23.77],
+    'Near Backcourt': [1.37, 0, 9.60, 5.485],
+    'Far-Left Service Box': [1.37, 11.885, 5.485, 18.285],
+    'Far-Right Service Box': [5.485, 11.885, 9.60, 18.285],
+    'Near-Left Service Box': [1.37, 5.485, 5.485, 11.885],
+    'Near-Right Service Box': [5.485, 5.485, 9.60, 11.885],
+    'Left Doubles Alley': [0, 0, 1.37, 23.77],
+    'Right Doubles Alley': [9.60, 0, 10.97, 23.77],
+  };
+  const bounds = latest.eventKind === 'bounce' ? zoneBounds[latest.zone] : null;
+  if (bounds) {
+    ctx.fillStyle = 'rgba(242, 232, 60, .36)';
+    ctx.fillRect(px(bounds[0]), py(bounds[3]), px(bounds[2]) - px(bounds[0]), py(bounds[1]) - py(bounds[3]));
+  }
+  state.scene.bounces
+    .filter((bounce) => bounce.rally_id === latest.rally_id && bounce.t <= now)
+    .forEach((bounce) => {
+      const x = px(Math.max(0, Math.min(10.97, bounce.x)));
+      const y = py(Math.max(0, Math.min(23.77, bounce.y)));
+      if (bounce.zone === 'Out') {
+        drawRedCross(ctx, x, y, 5);
+      } else {
+        ctx.fillStyle = state.scene.player_identities?.[bounce.player_id]?.color || '#d7ff78';
+        ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 12;
+        ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+      }
+    });
+  (state.scene.net_hits || [])
+    .filter((event) => event.rally_id === latest.rally_id && event.t <= now)
+    .forEach((event) => drawRedCross(ctx, px(event.x), py(event.y), 5));
+  ctx.restore();
 }
 
 function drawHeatmap() {
@@ -1003,14 +1251,16 @@ function drawHeatmap() {
     const x = pointX(Math.max(xMin, Math.min(xMax, bounce.x)));
     const y = pointY(Math.max(yMin, Math.min(yMax, bounce.y)));
     if (bounce.zone === 'Out') {
-      ctx.save(); ctx.strokeStyle = '#ff665e'; ctx.shadowColor = 'rgba(255,80,72,.8)'; ctx.shadowBlur = 12; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.moveTo(x - 6, y - 6); ctx.lineTo(x + 6, y + 6); ctx.moveTo(x + 6, y - 6); ctx.lineTo(x - 6, y + 6); ctx.stroke(); ctx.restore(); return;
+      drawRedCross(ctx, x, y); return;
     }
     const playerColor = state.scene?.player_identities?.[bounce.player_id]?.color || '#d7ff78';
     const glow = ctx.createRadialGradient(x, y, 0, x, y, 19);
     glow.addColorStop(0, `${playerColor}ee`); glow.addColorStop(0.25, `${playerColor}78`); glow.addColorStop(1, `${playerColor}00`);
     ctx.fillStyle = glow; ctx.fillRect(x - 22, y - 22, 44, 44); ctx.fillStyle = playerColor;
     ctx.beginPath(); ctx.arc(x, y, index % 5 === 0 ? 3 : 2.2, 0, Math.PI * 2); ctx.fill();
+  });
+  (state.scene?.net_hits || []).forEach((event) => {
+    drawRedCross(ctx, pointX(event.x), pointY(event.y));
   });
 }
 
@@ -1111,11 +1361,39 @@ $$('.event-filter button').forEach((button) => button.addEventListener('click', 
   $$('.event-filter button').forEach((item) => item.classList.remove('active')); button.classList.add('active'); buildEvents(button.dataset.filter);
 }));
 window.addEventListener('resize', () => { if (!$('#resultsView').hidden) renderAll(); });
-$('#analysisVideo').addEventListener('timeupdate', (event) => { $('#playhead').style.left = `${Math.min(100, event.currentTarget.currentTime / Math.max(state.duration, 1) * 100)}%`; });
+$('#analysisVideo').addEventListener('timeupdate', (event) => {
+  $('#playhead').style.left = `${Math.min(100, event.currentTarget.currentTime / Math.max(state.duration, 1) * 100)}%`;
+  drawEventOverlay();
+  if (browserCorrection.active) { drawCorrectedVideoFrame(); updateCorrectedControls(); }
+});
+$('#analysisVideo').addEventListener('play', updateCorrectedControls);
+$('#analysisVideo').addEventListener('pause', updateCorrectedControls);
+$('#correctedPlayButton').addEventListener('click', () => {
+  const video = $('#analysisVideo');
+  if (video.paused) video.play().catch(() => toast('浏览器暂时无法播放这段视频'));
+  else video.pause();
+});
+$('#correctedSeek').addEventListener('input', (event) => {
+  const video = $('#analysisVideo');
+  video.currentTime = (Number(event.target.value) / 1000) * (video.duration || 0);
+  drawCorrectedVideoFrame();
+});
+$('#correctedFullscreen').addEventListener('click', () => {
+  const shell = $('#analysisVideo').closest('.video-shell');
+  if (document.fullscreenElement) document.exitFullscreen();
+  else shell.requestFullscreen?.();
+});
+$('#correctedVideoCanvas').addEventListener('click', () => $('#correctedPlayButton').click());
 $('#overlayToggle').addEventListener('change', (event) => {
-  if (!state.annotatedReady) {
+  if (!state.annotatedReady && !state.eventOverlayReady) {
     event.target.checked = false;
     toast('标注视频仍在后台生成，请稍候');
+    return;
+  }
+  if (state.eventOverlayReady) {
+    state.annotated = event.target.checked;
+    drawEventOverlay();
+    toast(state.annotated ? '已显示本回合落点标记' : '已隐藏分析标记');
     return;
   }
   const video = $('#analysisVideo'), time = video.currentTime, wasPlaying = !video.paused;

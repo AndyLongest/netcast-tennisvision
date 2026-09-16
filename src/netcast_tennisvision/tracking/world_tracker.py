@@ -129,7 +129,7 @@ def track_ball_persistent(
     search_axes_used: dict[int, tuple[float, float]] = {}
     motion_mode_used: dict[int, str] = {}
 
-    def finish_active(reason: str) -> None:
+    def finish_active(reason: str, decision_frame: int | None = None) -> None:
         nonlocal active
         if active is None:
             return
@@ -137,11 +137,15 @@ def track_ball_persistent(
         # into a ghost ball after the rally has actually left the picture.
         end = active["last_seen"]
         if end >= active["start"]:
-            raw_segments.append(_build_segment(
+            segment = _build_segment(
                 active["start"], end, active["observations"], transition, observation,
                 process_noise, measurement_noise, initial_covariance,
                 active["track_id"], reason,
-            ))
+            )
+            segment["termination_decision_frame"] = int(
+                end if decision_frame is None else decision_frame
+            )
+            raw_segments.append(segment)
         active = None
 
     for frame, meta in enumerate(frames_meta):
@@ -149,7 +153,7 @@ def track_ball_persistent(
                       if -0.08 * width <= c[0] <= 1.08 * width
                       and -0.08 * height <= c[1] <= 1.08 * height]
         if not meta.get("is_court", False):
-            finish_active("camera_cut")
+            finish_active("camera_cut", frame)
             rejected_singletons += len(hypotheses)
             hypotheses = []
             continue
@@ -509,14 +513,20 @@ def track_ball_persistent(
                     if active.get("net_pending", 0) or crossed or near_net:
                         active["net_pending"] = active.get("net_pending", 0) + 1
                     if active.get("net_pending", 0) >= net_grace:
-                        active["pending_terminal"] = "net_hit"
-                if active["coast"] > max_occlusion:
+                        # The grace window has already allowed a genuine crossing to
+                        # reappear. Once it expires, a net contact is a hard terminal:
+                        # release the track now instead of coasting for another 0.8 s
+                        # and letting the next feed/serve pull the smoother through it.
+                        net_terminations += 1
+                        finish_active("net_hit", frame)
+                        hypotheses = []
+                if active is not None and active["coast"] > max_occlusion:
                     reason = active.get("pending_terminal") or "uncertainty_exhausted"
                     if reason == "net_hit":
                         net_terminations += 1
                     elif reason == "out_of_frame":
                         frame_exit_terminations += 1
-                    finish_active(reason)
+                    finish_active(reason, frame)
                     hypotheses = []
             continue
 
@@ -572,7 +582,7 @@ def track_ball_persistent(
         rejected_singletons += max(0, len(hypotheses) - 1)
         hypotheses = []
 
-    finish_active("end_of_clip")
+    finish_active("end_of_clip", len(frames_meta) - 1)
     rejected_singletons += len(hypotheses)
 
     # Join fragments when the old state can physically reach the new observations through
@@ -585,6 +595,11 @@ def track_ball_persistent(
             merged.append(segment)
             continue
         previous = merged[-1]
+        # A physical terminal is not an occlusion. Never let future evidence pull an
+        # RTS smoother across a ball that hit the net or left the camera view.
+        if previous["termination"] in {"net_hit", "out_of_frame", "camera_cut"}:
+            merged.append(segment)
+            continue
         gap = segment["frames"][0] - previous["frames"][-1] - 1
         state = previous["x_post"][-1].copy()
         covariance = previous["P_post"][-1].copy()
@@ -611,11 +626,15 @@ def track_ball_persistent(
                 segment["frames"], segment["meas"], segment["confidence"], strict=False
             ) if m is not None
         })
-        merged[-1] = _build_segment(
+        merged_segment = _build_segment(
             previous["frames"][0], segment["frames"][-1], observations,
             transition, observation, process_noise, measurement_noise, initial_covariance,
             previous["track_id"], segment["termination"],
         )
+        merged_segment["termination_decision_frame"] = segment.get(
+            "termination_decision_frame", segment["frames"][-1]
+        )
+        merged[-1] = merged_segment
         merged_occlusions += 1
 
     for segment in merged:
@@ -640,6 +659,7 @@ def track_ball_persistent(
         meta["ball_search_axes_px"] = None
         meta["ball_motion_mode"] = None
         meta["ball_terminal_reason"] = None
+        meta["ball_terminal_decision_frame"] = None
     for segment in merged:
         for i, (frame, state) in enumerate(zip(segment["frames"], segment["smooth"], strict=False)):
             meta = frames_meta[frame]
@@ -663,6 +683,9 @@ def track_ball_persistent(
                 "net_hit", "out_of_frame"
             }:
                 meta["ball_terminal_reason"] = segment["termination"]
+                meta["ball_terminal_decision_frame"] = int(
+                    segment.get("termination_decision_frame", frame)
+                )
 
     return merged, TrackerDiagnostics(
         confirmed_births=confirmed_births,

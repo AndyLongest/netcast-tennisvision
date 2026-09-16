@@ -24,6 +24,9 @@ work unless a new regression demonstrates that the current frozen path is worse.
 3. Prioritize far-court touchdown recall without changing detector-backed ball anchors.
 4. Add confidence calibration so only genuinely uncertain court or landing results ask for
    user correction.
+5. Reconcile an uncached fresh `demo` run (28 bounces / 32 hits on 2026-09-16) with the
+   frozen validated asset (29 / 35). The output-mode branch occurs after scene export and
+   is not the cause; identify and freeze the upstream calibration/cache dependency.
 
 ## P2 — performance
 

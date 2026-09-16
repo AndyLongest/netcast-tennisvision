@@ -76,6 +76,7 @@ Top-level fields currently include:
 - `fps`, `n_frames`: native timeline;
 - `frames`: per-frame compact 3D/display state;
 - `bounces`: confirmed touchdown events;
+- `net_hits`: confirmed terminal net contacts;
 - `hits`: racket-contact events;
 - `play_mode`: temporal near/far head-count decision, confidence and vote distribution;
 - `player_identities`: stable A/B display colours;
@@ -101,6 +102,11 @@ Important bounce fields:
 Hit records also expose `player_id` and `identity_confidence`. Identity is attached after
 tracking and touchdown decisions, so it is not an input to ball or landing accuracy.
 
+Net-hit records expose the last trustworthy lateral `x`, fixed court `net_y`, tracker
+`frame`, later `decision_frame`, `rally_id` and preceding hitter identity. The UI must
+wait for `decision_frame`, draw a red cross on the net, and treat the event as a hard
+trajectory boundary rather than a missing observation.
+
 Frame field `b` is the compact ball coordinate `[court_x, court_y, height]` or `null`.
 Frame field `c` is the compact confidence/source class consumed by the viewer. Any schema
 change must update `web/app.js`, the 3D exporter, frozen demo, manifest and tests together.
@@ -111,6 +117,7 @@ change must update `web/app.js`, the 3D exporter, frozen demo, manifest and test
 - Homography coordinates are trustworthy for a ball only at a known ground contact.
 - `decision_frame`, never the candidate frame, controls yellow highlighting.
 - Out events render a red cross and never a yellow zone.
+- Confirmed net hits render a red cross on the net and terminate the current flight.
 - The minimap filters by the active `rally_id` and does not draw the trajectory.
 - In-court landing dots use the hitter's A/B colour; out events remain red crosses.
 - Perspective correction is applied after inference and annotation rendering but before

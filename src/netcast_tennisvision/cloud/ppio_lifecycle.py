@@ -12,6 +12,7 @@ import hashlib
 import http.client
 import json
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -23,17 +24,14 @@ from typing import Any
 from urllib.parse import urlparse
 
 PPIO_API = "https://api.ppio.com/gpu-instance/openapi/v1"
-REMOTE_OUTPUTS = {
-    "scene3d.json": True,
-    "rally3d.html": True,
-    "annotated_clip.mp4": True,
-    "corrected_clip.mp4": False,
-}
+REMOTE_OUTPUTS = {"scene3d.json": True, "rally3d.html": True, "corrected_clip.mp4": False}
 TRANSFER_CHUNK_SIZE = 8 * 1024**2
 TRANSFER_ATTEMPTS = 5
 DEFAULT_TRANSFER_WORKERS = 4
 MAX_TRANSFER_WORKERS = 8
 CAMERA_PROFILE_TRANSFER_LIMIT = 3 * 1024**2
+DEFAULT_ROOTFS_SIZE_GB = 60
+MINIMUM_ROOTFS_SIZE_GB = 10
 
 
 class CloudLifecycleError(RuntimeError):
@@ -159,14 +157,13 @@ class PPIOJobManager:
                 self.runtime_path.unlink(missing_ok=True)
 
     def _create_instance(self) -> str:
+        rootfs_size = self._rootfs_size_for_product()
         payload = {
             "name": f"netcast-job-{int(time.time())}",
             "productId": self.product_id,
             "clusterId": self.cluster_id,
             "gpuNum": 1,
-            # PPIO currently caps ephemeral root filesystems at 84 GB. The runtime,
-            # models and two full-resolution videos fit comfortably inside 80 GB.
-            "rootfsSize": 80,
+            "rootfsSize": rootfs_size,
             "imageUrl": self.image,
             "imageAuth": "",
             "imageAuthId": "",
@@ -183,6 +180,7 @@ class PPIOJobManager:
                 "exec timeout --signal=TERM 7200 env "
                 "TENNISVISION_HOST=0.0.0.0 "
                 "TENNISVISION_PORT=8000 TENNISVISION_EXECUTION_TARGET=cloud "
+                "TENNISVISION_OUTPUT_MODE=event-overlay "
                 "NETCAST_VIDEO_ENCODER=auto NETCAST_X264_CRF=22 "
                 "PYTHONPATH=/app/src MPLBACKEND=Agg "
                 "python -m netcast_tennisvision.api.server --port 8000'"
@@ -193,11 +191,55 @@ class PPIOJobManager:
             "billingMode": "onDemand",
             "minCudaVersion": "12.8",
         }
-        response = self._provider_request("POST", "/gpu/instance/create", payload)
+        try:
+            response = self._provider_request("POST", "/gpu/instance/create", payload)
+        except CloudLifecycleError as exc:
+            # Product inventory can change between the products query and instance
+            # creation. A validation rejection is safe to retry because no instance
+            # was created and therefore no GPU billing has started.
+            provider_limit = self._rootfs_limit_from_error(str(exc))
+            if provider_limit is None or provider_limit == rootfs_size:
+                raise
+            payload["rootfsSize"] = provider_limit
+            response = self._provider_request("POST", "/gpu/instance/create", payload)
         instance_id = self._find_string(response, ("instanceId", "id"))
         if not instance_id:
             raise CloudLifecycleError(f"云端没有返回实例编号：{response}")
         return instance_id
+
+    def _rootfs_size_for_product(self) -> int:
+        """Choose a safe root filesystem size from the live product constraints."""
+        configured = os.environ.get("TENNISVISION_PPIO_ROOTFS_GB", "").strip()
+        try:
+            desired = int(configured) if configured else DEFAULT_ROOTFS_SIZE_GB
+        except ValueError:
+            desired = DEFAULT_ROOTFS_SIZE_GB
+        desired = max(MINIMUM_ROOTFS_SIZE_GB, desired)
+        try:
+            response = self._provider_request("GET", "/products")
+        except CloudLifecycleError:
+            return desired
+        products = response.get("data", []) if isinstance(response, dict) else []
+        for product in products if isinstance(products, list) else []:
+            if not isinstance(product, dict) or str(product.get("id", "")) != self.product_id:
+                continue
+            try:
+                minimum = max(MINIMUM_ROOTFS_SIZE_GB, int(product.get("minRootFS", 0)))
+                maximum = int(product.get("maxRootFS", 0))
+            except (TypeError, ValueError):
+                return desired
+            if maximum < minimum:
+                return desired
+            return max(minimum, min(desired, maximum))
+        return desired
+
+    @staticmethod
+    def _rootfs_limit_from_error(message: str) -> int | None:
+        match = re.search(r"rootfs size must not be more than\s+(\d+)\s*GB", message, re.I)
+        if not match:
+            return None
+        limit = int(match.group(1))
+        return limit if limit >= MINIMUM_ROOTFS_SIZE_GB else None
 
     def _wait_for_endpoint(self, instance_id: str) -> str:
         deadline = time.monotonic() + 10 * 60
@@ -367,7 +409,10 @@ class PPIOJobManager:
                 self._download_report(remote_url)
                 report_downloaded = True
             if state == "complete":
-                self._download_outputs(remote_url)
+                self._download_outputs(
+                    remote_url,
+                    annotated_required=bool(remote.get("annotated_video_ready", False)),
+                )
                 self._download_path(
                     remote_url,
                     "/data/camera_profiles.json",
@@ -394,12 +439,18 @@ class PPIOJobManager:
             required=False,
         )
 
-    def _download_outputs(self, remote_url: str) -> None:
+    def _download_outputs(self, remote_url: str, *, annotated_required: bool = True) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         for name, required in REMOTE_OUTPUTS.items():
             self._download_path(
                 remote_url, f"/data/outputs/{name}", self.output_dir / name, required=required
             )
+        self._download_path(
+            remote_url,
+            "/data/outputs/annotated_clip.mp4",
+            self.output_dir / "annotated_clip.mp4",
+            required=annotated_required,
+        )
 
     def _download_path(
         self, remote_url: str, remote_path: str, destination: Path, *, required: bool

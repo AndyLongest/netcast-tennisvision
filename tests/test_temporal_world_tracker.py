@@ -359,6 +359,33 @@ def test_missing_ball_in_net_band_requires_confirmation_then_terminates():
     assert diagnostics.net_terminations == 1
     assert segments[0]["termination"] == "net_hit"
     assert frames[2]["ball_terminal_reason"] == "net_hit"
+    assert frames[2]["ball_terminal_decision_frame"] == 8
+
+
+def test_confirmed_net_hit_is_never_smoothed_into_the_next_ball():
+    observations = {
+        0: [_candidate(200, 100, 0.9)],
+        1: [_candidate(200, 110, 0.9)],
+        2: [_candidate(200, 120, 0.9)],
+        9: [_candidate(200, 180, 0.9)],
+        10: [_candidate(200, 190, 0.9)],
+        11: [_candidate(200, 200, 0.9)],
+    }
+    frames = _frames(14, observations)
+    for frame in frames:
+        frame["net_y_px"] = 130.0
+
+    segments, diagnostics = track_ball_persistent(
+        frames, fps=30.0, spatial=1.0, speed_scale=1.0,
+        frame_size=(640, 360), hard_cap=80,
+    )
+
+    assert diagnostics.net_terminations == 1
+    assert len(segments) == 2
+    assert segments[0]["termination"] == "net_hit"
+    assert segments[0]["frames"][-1] == 2
+    assert segments[1]["frames"][0] == 9
+    assert all(frames[index]["ball_px"] is None for index in range(3, 9))
 
 
 def test_subframe_touchdown_is_between_samples():
