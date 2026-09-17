@@ -116,3 +116,36 @@ with L40S is insufficient. The live worker still invokes person inference on eve
 and repeatedly recomputes tracking over a fixed window after every four frames. Those
 branches must become temporally sparse/incremental while preserving contact and landing
 frames before another server-size decision is made.
+
+## L40S native-rate successor (production-v11, 2026-09-17)
+
+The next release removed a lossless CPU round-trip (JPEG encode followed immediately by
+JPEG decode), increased the unchanged ball-model CUDA batch from four to sixteen, and ran
+person detection every fourth native frame. Intermediate person boxes causally hold the
+most recent real detection; every ball frame and every RacketVision input remains present.
+
+| Metric | production-v10 | production-v11 |
+|---|---:|---:|
+| Processed native frames | 1,737 | 1,737 |
+| Source duration | 58.067s | 58.067s |
+| Online worker elapsed | 102.446s | **59.409s** |
+| End-to-end inference factor | 1.764× | **1.023×** |
+| Peak queued source time | 24.905s | 5.850s during warm-up |
+| Queue after warm-up | continued growing | **stable at 0.3–0.5s** |
+| Final queue | 0.033s after draining | **0.301s at stream end** |
+| Online events | 29 | 30 |
+| Reference matches | 14 / 29 | 14 / 29 |
+
+From source time 15 seconds through 57 seconds the analysis clock remained within roughly
+half a second of the source clock. The initial warm-up backlog was fully recovered instead
+of accumulating. This satisfies the sustained 29.91fps ingest requirement on L40S; it does
+not claim that the current online landing detector has production accuracy. Its reference
+agreement remained unchanged at 14/29 and must be improved separately from throughput.
+
+Steady event presentation delay fell to approximately 1.8–2.3 seconds. The first few
+events were slower while CUDA and the person model warmed up. A venue service should keep
+the process/model warm for an active court session while retaining the on-demand instance
+lifecycle across inactive periods.
+
+The temporary instance `f6c10417166edbdf` was stopped and deleted after the run. Raw output
+is kept locally in ignored file `outputs/l40s_live_benchmark_v11.json`.

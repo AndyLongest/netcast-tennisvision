@@ -20,7 +20,7 @@ from netcast_tennisvision.paths import REPOSITORY_ROOT
 
 DEFAULT_IMAGE = (
     "image.ppinfra.com/prod-ahskpcitxxwcgdnfqfpu/"
-    "netcast-tennisvision:production-v10"
+    "netcast-tennisvision:production-v11"
 )
 DEFAULT_PRODUCT = "L40S.22c125g"
 TERMINAL_STATES = {"complete", "error", "stopped"}

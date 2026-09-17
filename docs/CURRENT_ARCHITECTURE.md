@@ -239,9 +239,22 @@ Production cloud releases use `Dockerfile.release`: a thin code overlay on the a
 `production-v1` ML runtime. The legacy image stores frozen weights in
 `/opt/netcast/models`; the release maps that directory to the canonical `/app/models`
 path and refuses to publish unless the ball, bounce, player-segmentation and
-player-identity checkpoints are all present. The relay currently pins `production-v10`. Short PPIO control-plane TLS
+player-identity checkpoints are all present. The relay currently pins `production-v11`. Short PPIO control-plane TLS
 disconnects while an existing instance starts are retried until the startup deadline;
 instance creation itself is never blindly retried because that could allocate two GPUs.
+
+The internal live-lab uses a different transport contract from offline uploads:
+FFmpeg publishes native-rate RTMP to ZLMediaKit, the GPU worker independently pulls that
+stream, and only confirmed events return to the browser. On L40S, the accepted
+`production-v11` worker preserves every native ball frame, batches sixteen unchanged
+RacketVision inputs per CUDA call, and runs player segmentation every fourth frame while
+causally holding the last real player boxes between samples. It queues decoded ndarrays
+directly and JPEG-encodes only the throttled browser preview. The 1,737-frame demo held a
+stable 0.3–0.5 second queue after warm-up and completed in 59.409 seconds for 58.067 seconds
+of source; the prior every-frame person/four-frame-batch worker required 102.446 seconds.
+`TENNISVISION_LIVE_BATCH_SIZE` and `TENNISVISION_LIVE_PERSON_STRIDE` are bounded rollback
+controls. These settings apply only to the causal live worker; the offline production
+report continues to use its documented full-frame person path.
 
 Rendering first performs a one-frame NVENC preflight. A usable NVIDIA encoder receives the
 unchanged rendered frames with the `p4`/CQ20 quality profile; otherwise an on-demand cloud
