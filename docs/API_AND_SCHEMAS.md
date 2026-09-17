@@ -137,6 +137,7 @@ Important bounce fields:
 | `line_uncertainty_m` | local world-space uncertainty propagated through the inverse homography |
 | `line_nearest_boundary` | sideline/baseline (or corner pair) governing the call |
 | `player_id` | identity of the player whose preceding strike produced this landing |
+| `player_color` | stabilized dominant torso colour of that hitter, as a CSS hex colour |
 | `identity_confidence` | OSNet pair-assignment margin; not a calibrated probability |
 | `identity_rally_consensus` | share of confidence-weighted frames supporting the rally mapping |
 | `identity_source` | rally-tracklet consensus plus landing-half corroboration, or an explicit unresolved fallback |

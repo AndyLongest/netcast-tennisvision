@@ -69,7 +69,7 @@
           <div class="analysis-empty" id="analysisEmpty"><i>⌁</i><strong>分析画面尚未开始</strong><span>落点只会在确认后出现，不会提前剧透</span></div>
           <div class="decision-flash" id="decisionFlash"><span>落点已确认</span><strong id="flashZone">球员 A 落点</strong></div>
           <div class="court-orientation" aria-hidden="true"><span>远端</span><span>近端</span></div>
-          <div class="player-legend" aria-label="落点颜色"><span><i class="player-a"></i>球员 A</span><span><i class="player-b"></i>球员 B</span><span><i class="out-ball"></i>界外</span></div>
+          <div class="player-legend" aria-label="落点颜色"><span><i class="player-a" id="playerAColor"></i>球员 A 主色</span><span><i class="player-b" id="playerBColor"></i>球员 B 主色</span><span><i class="out-ball"></i>界外</span></div>
         </div>
         <div class="event-console">
           <div class="console-heading"><span>实时事件流</span><small>只显示已经确认的事件</small></div>
@@ -143,6 +143,6 @@
   </dialog>
 
   <div class="toast" id="labToast" role="status" aria-live="polite"></div>
-  <script src="live-lab.js?v=20260917k"></script>
+  <script src="live-lab.js?v=20260917l"></script>
 </body>
 </html>

@@ -135,6 +135,9 @@ the manual timestamp windows. UI-only work must not alter inference or event dat
   normal touchdown was struck from the opposite half. This repairs a single-frame racket
   proximity error without changing the ball track, touchdown position or landing class.
   The correction source and whether the hit side disagreed remain exported for audit.
+- Player presentation colour is sampled from the central torso crop, aggregated across
+  frames under the stable ReID label, and emitted downstream as `player_color`. It never
+  participates in ball tracking, landing detection or near/far court geometry.
 
 ## Play-mode routing
 

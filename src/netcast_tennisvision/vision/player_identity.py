@@ -8,7 +8,7 @@ side is accepted only after three strong, consecutive OSNet-AIN observations.
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +37,10 @@ class IdentityResult:
 
     frames: list[dict[str, Any]]
     metrics: dict[str, Any]
+    colors: dict[str, str] = field(default_factory=lambda: {
+        identity: "#%02x%02x%02x" % PLAYER_COLORS_RGB[identity]
+        for identity in ("A", "B")
+    })
 
 
 def load_osnet(weights: Path, device: torch.device) -> torch.nn.Module:
@@ -131,6 +135,84 @@ def crop_player(frame: np.ndarray, box: np.ndarray) -> np.ndarray | None:
     return frame[top:bottom, left:right].copy()
 
 
+def dominant_player_color(crop: np.ndarray) -> np.ndarray | None:
+    """Return a robust BGR shirt colour from the central torso area.
+
+    The head, legs and most box background are deliberately excluded. Saturated pixels
+    win when clothing is colourful; neutral pixels remain eligible for white, grey and
+    black kits. Quantisation makes the estimate resistant to compression noise.
+    """
+    if crop is None or crop.ndim != 3 or crop.shape[2] != 3:
+        return None
+    height, width = crop.shape[:2]
+    if height < 20 or width < 8:
+        return None
+    torso = crop[
+        max(0, round(height * 0.18)):max(1, round(height * 0.62)),
+        max(0, round(width * 0.20)):max(1, round(width * 0.80)),
+    ]
+    if torso.size == 0:
+        return None
+    pixels = torso.reshape(-1, 3)[:: max(1, torso.size // 9000)]
+    hsv = cv2.cvtColor(pixels.reshape(-1, 1, 3), cv2.COLOR_BGR2HSV).reshape(-1, 3)
+    visible = (hsv[:, 2] >= 18) & (hsv[:, 2] <= 250)
+    colourful = visible & (hsv[:, 1] >= 45)
+    mask = colourful if int(colourful.sum()) >= max(18, round(visible.sum() * 0.14)) else visible
+    selected = pixels[mask]
+    if len(selected) < 8:
+        return None
+    buckets = (selected.astype(np.int32) // 32).clip(0, 7)
+    codes = buckets[:, 0] * 64 + buckets[:, 1] * 8 + buckets[:, 2]
+    winner = int(np.bincount(codes, minlength=512).argmax())
+    return np.median(selected[codes == winner], axis=0).astype(np.float32)
+
+
+def stable_player_color(
+    samples: list[np.ndarray], fallback: str = "#c4f12c",
+) -> str:
+    """Choose a colour medoid across frames and make it legible on the dark UI."""
+    valid = [np.asarray(sample, dtype=np.float32).reshape(3) for sample in samples
+             if sample is not None and np.asarray(sample).size == 3]
+    if not valid:
+        return fallback
+    bgr = np.stack(valid).clip(0, 255).astype(np.uint8)
+    lab = cv2.cvtColor(bgr.reshape(-1, 1, 3), cv2.COLOR_BGR2LAB).reshape(-1, 3).astype(float)
+    distances = np.linalg.norm(lab[:, None, :] - lab[None, :, :], axis=2)
+    chosen = bgr[int(np.argmin(np.median(distances, axis=1)))].reshape(1, 1, 3)
+    hsv = cv2.cvtColor(chosen, cv2.COLOR_BGR2HSV).reshape(3).astype(int)
+    if hsv[1] < 30:
+        hsv[2] = int(np.clip(hsv[2], 105, 235))
+    else:
+        hsv[1] = int(np.clip(hsv[1], 85, 245))
+        hsv[2] = int(np.clip(hsv[2], 115, 235))
+    display_bgr = cv2.cvtColor(hsv.astype(np.uint8).reshape(1, 1, 3), cv2.COLOR_HSV2BGR)[0, 0]
+    red, green, blue = map(int, display_bgr[::-1])
+    return f"#{red:02x}{green:02x}{blue:02x}"
+
+
+def identity_palette(
+    observations: dict[int, dict[str, dict[str, Any]]],
+    dense_decisions: list[dict[str, Any]],
+) -> dict[str, str]:
+    """Aggregate torso colours under the same temporally stable A/B identity labels."""
+    samples: dict[str, list[np.ndarray]] = defaultdict(list)
+    for frame_index, by_side in observations.items():
+        if not (0 <= frame_index < len(dense_decisions)):
+            continue
+        mapping = dense_decisions[frame_index]["mapping"]
+        for side, observation in by_side.items():
+            identity = mapping.get(side)
+            colour = observation.get("color_bgr")
+            if identity in {"A", "B"} and colour is not None:
+                samples[identity].append(colour)
+    return {
+        identity: stable_player_color(
+            samples[identity], "#%02x%02x%02x" % PLAYER_COLORS_RGB[identity]
+        )
+        for identity in ("A", "B")
+    }
+
+
 def preprocess(crops: list[np.ndarray]) -> torch.Tensor:
     mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
     std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
@@ -209,6 +291,7 @@ def collect_observations(
                 continue
             observations[frame_index][side] = {
                 "box": box.copy(), "world": player["world"].copy(), "crop": crop,
+                "color_bgr": dominant_player_color(crop),
             }
             pending_crops.append(crop)
             pending_keys.append((frame_index, side))
@@ -405,7 +488,7 @@ def identify_players(
             "model": MODEL_NAME, "mode": "position_fallback",
             "reason": str(exc), "sample_stride": sample_stride,
             "sample_frames": len(observations), "fps": round(fps, 4),
-        })
+        }, identity_palette(observations, fallback))
     sparse, metrics = classify_observations(
         observations, prototypes, int(fps * enrol_seconds), fps=fps,
     )
@@ -413,7 +496,8 @@ def identify_players(
         "model": MODEL_NAME, "mode": "appearance_reid", "sample_stride": sample_stride,
         "sample_frames": len(observations), "fps": round(fps, 4),
     })
-    return IdentityResult(make_dense_decisions(sparse, len(frames_meta)), metrics)
+    dense = make_dense_decisions(sparse, len(frames_meta))
+    return IdentityResult(dense, metrics, identity_palette(observations, dense))
 
 
 def attach_identity_to_frames(

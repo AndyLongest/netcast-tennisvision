@@ -77,6 +77,29 @@ function orderedBaselineEvents(report) {
   const netHits = Array.isArray(report?.net_hits) ? report.net_hits.map((event) => ({...event, zone: '下网', net_hit: true})) : [];
   return [...bounces, ...netHits].sort((a, b) => baselineDecisionTime(a) - baselineDecisionTime(b));
 }
+function validPlayerColor(value, fallback) {
+  return /^#[0-9a-f]{6}$/i.test(String(value || '')) ? String(value) : fallback;
+}
+function currentPlayerColors() {
+  const baseline = state.report?.player_identities || {};
+  const live = state.latestLivePayload?.player_colors || {};
+  return {
+    A: validPlayerColor(live.A || baseline.A?.color, '#b542f6'),
+    B: validPlayerColor(live.B || baseline.B?.color, '#2dd4bf'),
+  };
+}
+function applyPlayerPalette() {
+  const colors = currentPlayerColors();
+  [['playerAColor', colors.A], ['playerBColor', colors.B]].forEach(([id, color]) => {
+    const marker = byId(id);
+    marker.style.background = color;
+    marker.style.boxShadow = `0 0 8px ${color}`;
+  });
+}
+function eventPlayerColor(event) {
+  const colors = currentPlayerColors();
+  return validPlayerColor(event.player_color, colors[event.player_id] || '#c4f12c');
+}
 function resetTimeline() {
   state.delivered = []; state.nextEvent = 0; state.activeRally = null; state.eventCursor = 0;
   state.pendingLiveEvents = []; state.latestLivePayload = null;
@@ -86,6 +109,7 @@ function resetTimeline() {
   byId('landingDetail').textContent = '当前回合 0 个';
   byId('latencyValue').textContent = '—';
   byId('latencyDetail').textContent = '等待真实链路';
+  applyPlayerPalette();
   drawCourt();
 }
 function setVisualMode(mode) {
@@ -445,6 +469,7 @@ async function pollLiveExperiment() {
     if (!response.ok) throw new Error(payload.error || '实时状态读取失败');
     state.missingPolls = 0;
     state.latestLivePayload = payload;
+    applyPlayerPalette();
     const running = ['queued', 'preparing', 'awaiting_stream', 'connecting', 'running'].includes(payload.state);
     setRunning(running, payload.stage || (running ? '直播中' : '已完成'));
     setRoutePhase(payload.state);
@@ -541,7 +566,7 @@ function drawCourt() {
       ctx.strokeStyle = '#ff5b6e'; ctx.lineWidth = 3; ctx.beginPath();
       ctx.moveTo(px - 7, py - 7); ctx.lineTo(px + 7, py + 7); ctx.moveTo(px + 7, py - 7); ctx.lineTo(px - 7, py + 7); ctx.stroke();
     } else {
-      const color = event.player_id === 'A' ? '#b542f6' : event.player_id === 'B' ? '#2dd4bf' : '#c4f12c';
+      const color = eventPlayerColor(event);
       ctx.shadowColor = color; ctx.shadowBlur = 14; ctx.fillStyle = color;
       ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
@@ -556,7 +581,7 @@ function deliverEvent(event, latencyMs, measured) {
   const out = lineCall === 'out' || event.outcome === 'out' || event.net_hit;
   const player = event.player_id === 'A' ? '球员 A' : event.player_id === 'B' ? '球员 B' : '未分配球员';
   const label = out ? (event.net_hit ? '下网' : '界外') : `${player} 落点`;
-  const color = event.player_id === 'A' ? '#b542f6' : event.player_id === 'B' ? '#2dd4bf' : '#c4f12c';
+  const color = eventPlayerColor(event);
   byId('landingCount').textContent = String(state.delivered.length);
   const currentRallyCount = state.delivered.filter((item) => item.rally_id === state.activeRally).length;
   byId('landingDetail').textContent = `当前回合 ${currentRallyCount} 个`;

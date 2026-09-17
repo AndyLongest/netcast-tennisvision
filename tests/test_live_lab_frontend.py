@@ -56,6 +56,12 @@ def test_live_lab_exposes_real_chain_and_separate_offline_baseline() -> None:
     assert "openLiveCalibration(file)" in script
     assert "JSON.stringify({court_corners: corners})" in script
     assert "'X-Court-Corners': JSON.stringify(corners)" in script
+    assert 'id="playerAColor"' in page
+    assert 'id="playerBColor"' in page
+    assert "event.player_color" in script
+    assert "state.latestLivePayload?.player_colors" in script
+    assert "球员 A 主色" in page
+    assert "球员 B 主色" in page
 
 
 def test_expired_live_session_returns_to_clean_idle_page() -> None:

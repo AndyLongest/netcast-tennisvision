@@ -35,6 +35,13 @@ from netcast_tennisvision.paths import REPOSITORY_ROOT
 from netcast_tennisvision.streaming.result_relay import ResultRelayPublisher
 from netcast_tennisvision.tracking.geometry import inside_player_body
 from netcast_tennisvision.tracking.world_tracker import track_ball_persistent
+from netcast_tennisvision.vision.player_identity import (
+    PLAYER_COLORS_RGB,
+    crop_player,
+    dominant_player_color,
+    select_side_players,
+    stable_player_color,
+)
 from netcast_tennisvision.vision.racketvision import (
     DEFAULT_THRESHOLD,
     MODEL_HEIGHT,
@@ -559,6 +566,21 @@ class LiveExperimentSession:
             person_stride = _bounded_int_env(
                 "TENNISVISION_LIVE_PERSON_STRIDE", DEFAULT_PERSON_STRIDE, 1, 12
             )
+            side_color_samples: dict[str, deque[np.ndarray]] = {
+                "near": deque(maxlen=45), "far": deque(maxlen=45),
+            }
+
+            def live_player_colors() -> dict[str, str]:
+                return {
+                    "A": stable_player_color(
+                        list(side_color_samples["near"]),
+                        "#%02x%02x%02x" % PLAYER_COLORS_RGB["A"],
+                    ),
+                    "B": stable_player_color(
+                        list(side_color_samples["far"]),
+                        "#%02x%02x%02x" % PLAYER_COLORS_RGB["B"],
+                    ),
+                }
             last_person_boxes = np.empty((0, 4), dtype=np.float32)
             emitted_frames: set[int] = set()
             last_event_frame = -10_000
@@ -600,6 +622,16 @@ class LiveExperimentSession:
                     offset: _person_boxes(result)
                     for offset, result in zip(sampled_offsets, sampled_results, strict=True)
                 }
+                for offset, boxes in boxes_by_offset.items():
+                    selected_players = select_side_players({
+                        "court_corners": corners,
+                        "person_boxes": boxes,
+                    })
+                    for side, player in selected_players.items():
+                        crop = crop_player(pending_frames[offset], player["box"])
+                        colour = dominant_player_color(crop) if crop is not None else None
+                        if colour is not None:
+                            side_color_samples[side].append(colour)
                 active_boxes = last_person_boxes
                 for offset, candidates in enumerate(decoded):
                     if offset in boxes_by_offset:
@@ -684,7 +716,9 @@ class LiveExperimentSession:
                     # With a fixed baseline camera, a far-half landing was struck by the
                     # near-side player and vice versa. Stable A/B identity can be layered
                     # on this side assignment after the live identity branch is validated.
-                    player_id = "A" if y >= COURT_LENGTH_M / 2.0 else "B"
+                    hitter_side = "near" if y >= COURT_LENGTH_M / 2.0 else "far"
+                    player_id = "A" if hitter_side == "near" else "B"
+                    player_colors = live_player_colors()
                     now = time.time()
                     event_time = event_frame / fps
                     self._emit({
@@ -693,14 +727,19 @@ class LiveExperimentSession:
                         "decision_frame": int(frames_meta[-1].get("source_frame", len(frames_meta) - 1)),
                         "t": event_time, "x": x, "y": y,
                         "zone": "Out" if line.call == "out" else "在线候选",
-                        "line_call": line.call, "player_id": player_id, "rally_id": rally_id,
+                        "line_call": line.call, "player_id": player_id,
+                        "player_color": player_colors[player_id], "rally_id": rally_id,
                         "impulse_score": float(impulse["score"]),
                         "emitted_at": now,
                         "end_to_end_delay_ms": max(0.0, (now - producer_started - event_time) * 1000.0),
                     })
                 inferred_frames = int(self.snapshot().get("detector_frames", 0)) + len(decoded)
-                self._update(detector_frames=inferred_frames, tracker_frames=len(frames_meta),
-                             batch_first_frame=first_index)
+                self._update(
+                    detector_frames=inferred_frames,
+                    tracker_frames=len(frames_meta),
+                    batch_first_frame=first_index,
+                    player_colors=live_player_colors(),
+                )
 
             # OpenCV already returns an independent ndarray for every decoded frame.
             # Queue it directly: the previous implementation JPEG-encoded every frame

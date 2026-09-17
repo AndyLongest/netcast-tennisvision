@@ -5,7 +5,10 @@ from netcast_tennisvision.vision.player_identity import (
     attach_identity_to_frames,
     attribute_landings_to_hitters,
     classify_observations,
+    dominant_player_color,
+    identity_palette,
     make_dense_decisions,
+    stable_player_color,
 )
 
 
@@ -18,6 +21,36 @@ def _positioned_observation(feature, x, y):
         "feature": np.asarray(feature, dtype=np.float32),
         "world": np.asarray([x, y], dtype=np.float32),
     }
+
+
+def test_player_colour_comes_from_the_central_torso_not_the_box_background():
+    crop = np.full((120, 80, 3), (180, 90, 30), dtype=np.uint8)
+    crop[22:75, 16:64] = (20, 30, 220)
+
+    colour = dominant_player_color(crop)
+
+    assert colour is not None
+    displayed = stable_player_color([colour])
+    assert int(displayed[1:3], 16) > 180
+    assert int(displayed[1:3], 16) > int(displayed[5:7], 16)
+
+
+def test_identity_palette_follows_the_person_across_a_side_change():
+    red = np.asarray([20, 30, 220], dtype=np.float32)
+    blue = np.asarray([220, 80, 20], dtype=np.float32)
+    observations = {
+        0: {"near": {"color_bgr": red}, "far": {"color_bgr": blue}},
+        1: {"near": {"color_bgr": blue}, "far": {"color_bgr": red}},
+    }
+    decisions = [
+        {"mapping": {"near": "A", "far": "B"}},
+        {"mapping": {"near": "B", "far": "A"}},
+    ]
+
+    palette = identity_palette(observations, decisions)
+
+    assert int(palette["A"][1:3], 16) > int(palette["A"][5:7], 16)
+    assert int(palette["B"][5:7], 16) > int(palette["B"][1:3], 16)
 
 
 def test_identity_assignment_requires_three_consistent_samples_before_switching_sides():
