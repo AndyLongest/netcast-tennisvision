@@ -2,7 +2,11 @@ import json
 import math
 
 from netcast_tennisvision.api import server
-from netcast_tennisvision.api.server import supports_native_fps, video_fingerprint
+from netcast_tennisvision.api.server import (
+    parse_live_court_corners,
+    supports_native_fps,
+    video_fingerprint,
+)
 
 
 def test_accepts_any_positive_native_frame_rate():
@@ -13,6 +17,27 @@ def test_accepts_any_positive_native_frame_rate():
 def test_rejects_only_invalid_frame_rates():
     for fps in (0.0, -1.0, math.nan, math.inf, -math.inf):
         assert not supports_native_fps(fps)
+
+
+def test_live_court_confirmation_accepts_a_normalized_trapezoid():
+    corners = [[0.2, 0.8], [0.8, 0.8], [0.65, 0.2], [0.35, 0.2]]
+
+    assert parse_live_court_corners(corners) == corners
+
+
+def test_live_court_confirmation_rejects_missing_or_malformed_points():
+    for corners in (
+        None,
+        [],
+        [[0.2, 0.8], [0.8, 0.8], [0.65, 0.2]],
+        [[0.2, 0.8, 1], [0.8, 0.8], [0.65, 0.2], [0.35, 0.2]],
+        [[-0.1, 0.8], [0.8, 0.8], [0.65, 0.2], [0.35, 0.2]],
+    ):
+        try:
+            parse_live_court_corners(corners)
+        except ValueError:
+            continue
+        raise AssertionError(f"invalid corners were accepted: {corners!r}")
 
 
 def test_status_keeps_job_identity_across_pipeline_progress_updates(tmp_path, monkeypatch):

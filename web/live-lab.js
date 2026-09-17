@@ -8,6 +8,7 @@ const state = {
   pollTimer: 0, missingPolls: 0, playbackUrl: '', playbackConnecting: false, nextPlaybackRetryAt: 0,
   routeCounters: {ingested: null, processed: null, relayUpdated: null}, routePulseAt: {}, routePulseTimers: {},
   pendingLiveEvents: [], latestLivePayload: null, liveSyncTimer: 0,
+  calibration: {file: null, objectUrl: '', points: [], frameReady: false},
 };
 
 function rememberLiveSession(sessionId) {
@@ -280,7 +281,74 @@ function syncRouteFlow(payload) {
   byId('flowAnalysis').textContent = `${Number(payload.event_cursor) || 0} 个落点 · ${backlog.toFixed(2)} 秒积压`;
 }
 
-async function startLiveExperiment() {
+function redrawLiveCalibration() {
+  const canvas = byId('liveCalibrationCanvas');
+  const video = byId('liveCalibrationVideo');
+  if (!state.calibration.frameReady || !video.videoWidth) return;
+  const maxWidth = Math.min(1280, video.videoWidth);
+  const maxHeight = Math.round(maxWidth * video.videoHeight / video.videoWidth);
+  if (canvas.width !== maxWidth || canvas.height !== maxHeight) {
+    canvas.width = maxWidth; canvas.height = maxHeight;
+    canvas.style.aspectRatio = `${maxWidth}/${maxHeight}`;
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  const points = state.calibration.points.map(([x, y]) => [x * canvas.width, y * canvas.height]);
+  if (points.length > 1) {
+    ctx.strokeStyle = '#c4f12c'; ctx.lineWidth = 3; ctx.setLineDash([10, 7]);
+    ctx.beginPath(); points.forEach((point, index) => index ? ctx.lineTo(...point) : ctx.moveTo(...point));
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  points.forEach((point, index) => {
+    ctx.fillStyle = '#7f27d8'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(point[0], point[1], 10, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(String(index + 1), point[0], point[1]);
+  });
+}
+
+function resetLiveCalibration() {
+  state.calibration.points = [];
+  byId('liveCalibrationStep').textContent = '第 1 步：点击近端左角';
+  byId('liveCalibrationConfirm').disabled = true;
+  redrawLiveCalibration();
+}
+
+function closeLiveCalibration() {
+  const dialog = byId('liveCalibrationDialog');
+  if (dialog.open) dialog.close();
+  const video = byId('liveCalibrationVideo');
+  video.removeAttribute('src'); video.load();
+  if (state.calibration.objectUrl) URL.revokeObjectURL(state.calibration.objectUrl);
+  state.calibration.objectUrl = '';
+}
+
+function openLiveCalibration(file = null) {
+  closeLiveCalibration();
+  state.calibration.file = file;
+  state.calibration.frameReady = false;
+  resetLiveCalibration();
+  const dialog = byId('liveCalibrationDialog');
+  const video = byId('liveCalibrationVideo');
+  state.calibration.objectUrl = file ? URL.createObjectURL(file) : '';
+  video.src = state.calibration.objectUrl || DEMO_VIDEO;
+  byId('liveCalibrationStep').textContent = '正在读取球场画面…';
+  dialog.showModal();
+  const capture = () => {
+    state.calibration.frameReady = true;
+    resetLiveCalibration();
+  };
+  video.onseeked = capture;
+  video.onloadeddata = () => {
+    const target = Math.min(8, Math.max(0, (video.duration || 0) * .15));
+    if (Math.abs(video.currentTime - target) > .05) video.currentTime = target;
+    else capture();
+  };
+  video.onerror = () => { closeLiveCalibration(); toast('无法读取球场确认画面'); };
+  video.load();
+}
+
+async function startLiveExperiment(corners) {
   clearTimeout(state.pollTimer);
   cancelAnimationFrame(state.animationFrame);
   closeLivePlayback();
@@ -295,7 +363,11 @@ async function startLiveExperiment() {
   byId('analysisEmpty').querySelector('strong').textContent = '正在建立真实媒体链路';
   byId('analysisEmpty').querySelector('span').textContent = '模型加载完成后才会开始原速推流';
   try {
-    const response = await fetch('/api/live-lab/start', {method: 'POST', cache: 'no-store'});
+    const response = await fetch('/api/live-lab/start', {
+      method: 'POST', cache: 'no-store',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({court_corners: corners}),
+    });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || '无法启动端到端实验');
     rememberLiveSession(payload.session_id);
@@ -308,7 +380,7 @@ async function startLiveExperiment() {
   }
 }
 
-async function uploadLiveExperiment(file) {
+async function uploadLiveExperiment(file, corners) {
   if (!file) return;
   clearTimeout(state.pollTimer);
   cancelAnimationFrame(state.animationFrame);
@@ -329,7 +401,11 @@ async function uploadLiveExperiment(file) {
   try {
     const response = await fetch('/api/live-lab/upload', {
       method: 'POST',
-      headers: {'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name)},
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-Filename': encodeURIComponent(file.name),
+        'X-Court-Corners': JSON.stringify(corners),
+      },
       body: file,
       cache: 'no-store',
     });
@@ -507,9 +583,40 @@ function updateBaselineTimeline() {
   if (!video.paused && !video.ended) state.animationFrame = requestAnimationFrame(updateBaselineTimeline);
 }
 
-byId('startLiveButton').addEventListener('click', startLiveExperiment);
+byId('startLiveButton').addEventListener('click', () => openLiveCalibration());
 byId('uploadLiveButton').addEventListener('click', () => byId('liveUploadInput').click());
-byId('liveUploadInput').addEventListener('change', (event) => uploadLiveExperiment(event.target.files?.[0]));
+byId('liveUploadInput').addEventListener('change', (event) => {
+  const file = event.target.files?.[0];
+  if (file) openLiveCalibration(file);
+});
+byId('liveCalibrationCanvas').addEventListener('click', (event) => {
+  if (!state.calibration.frameReady || state.calibration.points.length >= 4) return;
+  const rect = event.currentTarget.getBoundingClientRect();
+  state.calibration.points.push([
+    Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
+    Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
+  ]);
+  const labels = ['近端左角', '近端右角', '远端右角', '远端左角'];
+  const count = state.calibration.points.length;
+  byId('liveCalibrationStep').textContent = count === 4
+    ? '四个角点已标记，请确认后启动'
+    : `第 ${count + 1} 步：点击${labels[count]}`;
+  byId('liveCalibrationConfirm').disabled = count !== 4;
+  redrawLiveCalibration();
+});
+byId('liveCalibrationReset').addEventListener('click', resetLiveCalibration);
+byId('liveCalibrationClose').addEventListener('click', closeLiveCalibration);
+byId('liveCalibrationDialog').addEventListener('cancel', (event) => {
+  event.preventDefault(); closeLiveCalibration();
+});
+byId('liveCalibrationConfirm').addEventListener('click', () => {
+  if (state.calibration.points.length !== 4) return;
+  const file = state.calibration.file;
+  const corners = state.calibration.points.map((point) => [...point]);
+  closeLiveCalibration();
+  if (file) uploadLiveExperiment(file, corners);
+  else startLiveExperiment(corners);
+});
 byId('useDemoButton').addEventListener('click', useDemoBaseline);
 byId('playButton').addEventListener('click', () => {
   if (state.mode !== 'baseline') return;

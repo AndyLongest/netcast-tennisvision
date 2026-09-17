@@ -200,6 +200,32 @@ def supports_native_fps(fps: float) -> bool:
     return math.isfinite(fps) and fps > 0.0
 
 
+def parse_live_court_corners(value: object) -> list[list[float]]:
+    """Validate normalized near-L, near-R, far-R, far-L clicks for live inference."""
+    try:
+        payload = json.loads(value) if isinstance(value, str) else value
+        if not isinstance(payload, list) or len(payload) != 4:
+            raise ValueError("请依次确认四个球场角点")
+        if any(not isinstance(point, list) or len(point) != 2 for point in payload):
+            raise ValueError("每个球场角点必须包含横、纵两个坐标")
+        normalized = [[float(point[0]), float(point[1])] for point in payload]
+        if any(
+            not all(math.isfinite(coordinate) and 0 <= coordinate <= 1 for coordinate in point)
+            for point in normalized
+        ):
+            raise ValueError("球场角点超出了画面范围")
+        import numpy as np
+
+        from netcast_tennisvision.vision.court_calibration import validate_manual_calibration
+
+        pixels = np.asarray(normalized, dtype=np.float64) * np.asarray([1000, 1000])
+        world = np.asarray([[0, 0], [10.97, 0], [10.97, 23.77], [0, 23.77]], np.float32)
+        validate_manual_calibration(pixels, (1000, 1000), world)
+        return normalized
+    except (IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError(str(exc) or "球场角点格式不正确") from exc
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -496,29 +522,34 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if request_path == "/api/live-lab/start":
             try:
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    length = 0
+                payload = self.read_bounded_json(maximum=4096) if length else {}
+                corners = parse_live_court_corners(payload.get("court_corners"))
                 if cloud_live_manager is not None:
                     if cloud_manager is not None and cloud_manager.active:
                         raise CloudLifecycleError("普通视频分析正在运行，请完成后再启动实时实验")
                     snapshot = cloud_live_manager.start_live(
                         ROOT / "assets" / "demo" / "demo.mp4",
-                        {"X-Filename": "demo.mp4"},
+                        {
+                            "X-Filename": "demo.mp4",
+                            "X-Court-Corners": json.dumps(corners),
+                        },
                         replace_active=True,
                     )
                     self.send_json(snapshot, HTTPStatus.ACCEPTED)
                 else:
                     source = ROOT / "assets" / "demo" / "demo.mp4"
-                    try:
-                        length = int(self.headers.get("Content-Length", "0"))
-                    except ValueError:
-                        length = 0
                     if length:
-                        payload = self.read_bounded_json(maximum=4096)
                         if payload.get("source") == "external_rtmp":
                             session = live_experiment_manager().start_external_stream(
                                 str(payload.get("stream_name", "")),
                                 fps_hint=float(payload.get("fps", 30.0)),
                                 source_name=Path(str(payload.get("filename", "camera"))).name,
                                 result_session_id=str(payload.get("result_session_id", "")),
+                                court_corners=corners,
                             )
                             self.send_json(session.snapshot(), HTTPStatus.ACCEPTED)
                             return
@@ -527,7 +558,9 @@ class Handler(SimpleHTTPRequestHandler):
                             if not candidates:
                                 raise RuntimeError("云端没有收到实时实验素材")
                             source = candidates[-1]
-                    session = live_experiment_manager().start_source(source)
+                    session = live_experiment_manager().start_source(
+                        source, court_corners=corners
+                    )
                     self.send_json(session.snapshot(), HTTPStatus.ACCEPTED)
             except (CloudLifecycleError, OSError, RuntimeError, ValueError) as exc:
                 self.send_json({"error": str(exc)}, HTTPStatus.SERVICE_UNAVAILABLE)
@@ -939,6 +972,9 @@ class Handler(SimpleHTTPRequestHandler):
                     "X-Filename": filename,
                     "X-Video-Fingerprint": video_fingerprint(clip),
                     "X-Fps": f"{fps:.6f}",
+                    "X-Court-Corners": json.dumps(
+                        parse_live_court_corners(self.headers.get("X-Court-Corners", ""))
+                    ),
                 },
                 replace_active=True,
             )

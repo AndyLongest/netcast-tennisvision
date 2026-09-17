@@ -3,6 +3,7 @@ from __future__ import annotations
 from netcast_tennisvision.streaming.live_experiment import (
     LiveExperimentManager,
     _bounded_int_env,
+    _camera_corners,
     _webrtc_origin,
     compare_landing_events,
 )
@@ -19,7 +20,7 @@ def test_live_manager_reuses_only_an_active_session(monkeypatch) -> None:
     started = []
 
     class FakeSession:
-        def __init__(self, _source=None) -> None:
+        def __init__(self, _source=None, **_options) -> None:
             self.id = str(len(started))
             self.state = "preparing"
 
@@ -54,9 +55,10 @@ def test_live_manager_accepts_an_explicit_uploaded_source(tmp_path, monkeypatch)
     started = []
 
     class FakeSession:
-        def __init__(self, selected_source) -> None:
+        def __init__(self, selected_source, **options) -> None:
             self.id = "uploaded"
             self.source = selected_source
+            self.options = options
 
         def start(self) -> None:
             started.append(self.source)
@@ -69,9 +71,11 @@ def test_live_manager_accepts_an_explicit_uploaded_source(tmp_path, monkeypatch)
     )
     manager = LiveExperimentManager()
 
-    session = manager.start_source(source)
+    corners = [[0.1, 0.8], [0.9, 0.8], [0.7, 0.2], [0.3, 0.2]]
+    session = manager.start_source(source, court_corners=corners)
 
     assert session.source == source
+    assert session.options["court_corners"] == corners
     assert started == [source]
 
 
@@ -95,13 +99,15 @@ def test_live_manager_accepts_an_external_camera_stream(monkeypatch) -> None:
     )
     manager = LiveExperimentManager()
 
+    corners = [[0.1, 0.8], [0.9, 0.8], [0.7, 0.2], [0.3, 0.2]]
     session = manager.start_external_stream(
-        "netcast-camera01", fps_hint=30.0, source_name="court.mp4"
+        "netcast-camera01", fps_hint=30.0, source_name="court.mp4", court_corners=corners
     )
 
     assert session.source is None
     assert session.options["external_stream_name"] == "netcast-camera01"
     assert session.options["source_name"] == "court.mp4"
+    assert session.options["court_corners"] == corners
     assert started == [session]
 
 
@@ -147,6 +153,19 @@ def test_live_comparison_requires_time_and_position_agreement() -> None:
     assert result["matched_events"] == 1
     assert result["recall"] == 0.5
     assert result["precision"] == 1 / 3
+
+
+def test_explicit_live_court_corners_are_scaled_to_the_camera_frame() -> None:
+    corners = [[0.1, 0.8], [0.9, 0.8], [0.7, 0.2], [0.3, 0.2]]
+
+    scaled = _camera_corners(1920, 1080, corners)
+
+    assert scaled.tolist() == [
+        [192.0, 864.0],
+        [1728.0, 864.0],
+        [1344.0, 216.0],
+        [576.0, 216.0],
+    ]
 
 
 def test_webrtc_origin_accepts_only_http_server_origins(monkeypatch) -> None:

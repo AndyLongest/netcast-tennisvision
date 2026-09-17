@@ -10,6 +10,10 @@ experiments are not runtime fallbacks.
 - Every valid native frame rate is accepted. Frames are neither dropped nor interpolated.
 - Native 29.97/30fps is the required regression floor; higher rates cost proportionally
   more inference time.
+- The live-lab requires one guided four-corner confirmation before provisioning L40S.
+  The normalized near-left, near-right, far-right and far-left points are validated on
+  the relay and scaled to the actual stream dimensions by the worker. Uploaded live tests
+  must not silently inherit Demo corners or a previous camera profile.
 
 ## One-way data flow
 

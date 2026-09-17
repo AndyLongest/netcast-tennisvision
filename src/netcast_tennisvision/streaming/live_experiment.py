@@ -146,8 +146,22 @@ def _webrtc_origin(host: str) -> str:
     return origin.rstrip("/")
 
 
-def _camera_corners(width: int, height: int) -> np.ndarray:
-    """Load the latest verified fixed-camera profile without decoding its JPEG."""
+def _camera_corners(
+    width: int,
+    height: int,
+    provided: list[list[float]] | None = None,
+) -> np.ndarray:
+    """Scale an explicit confirmation, falling back only for legacy local callers."""
+    if provided is not None:
+        normalized = np.asarray(provided, dtype=np.float32)
+        if (
+            normalized.shape != (4, 2)
+            or not np.isfinite(normalized).all()
+            or np.any(normalized < 0)
+            or np.any(normalized > 1)
+        ):
+            raise RuntimeError("实时实验收到的球场角点无效")
+        return normalized * np.asarray([width, height], dtype=np.float32)
     profile_path = ROOT / "data" / "camera_profiles.json"
     try:
         profiles = json.loads(profile_path.read_text(encoding="utf-8")).get("profiles", [])
@@ -199,6 +213,7 @@ class LiveExperimentSession:
         fps_hint: float = 30.0,
         source_name: str = "camera",
         result_session_id: str = "",
+        court_corners: list[list[float]] | None = None,
     ) -> None:
         self.id = uuid.uuid4().hex
         self.source = source
@@ -206,6 +221,7 @@ class LiveExperimentSession:
         self.fps_hint = fps_hint if fps_hint > 0 else 30.0
         self.source_name = source.name if source is not None else source_name
         self.result_session_id = result_session_id
+        self.court_corners = court_corners
         self.created_at = time.time()
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -522,7 +538,7 @@ class LiveExperimentSession:
                 )
                 producer_started = time.time() - len(prefetched_frames) / max(fps, 1e-9)
 
-            corners = _camera_corners(width, height)
+            corners = _camera_corners(width, height, self.court_corners)
             image_to_world = cv2.getPerspectiveTransform(corners, WORLD_CORNERS)
             world_to_image = np.linalg.inv(image_to_world)
             net_point = cv2.perspectiveTransform(
@@ -897,10 +913,17 @@ class LiveExperimentManager:
         self._lock = threading.Lock()
         self._session: LiveExperimentSession | None = None
 
-    def start_demo(self) -> LiveExperimentSession:
-        return self.start_source(DEMO_VIDEO)
+    def start_demo(
+        self, *, court_corners: list[list[float]] | None = None
+    ) -> LiveExperimentSession:
+        return self.start_source(DEMO_VIDEO, court_corners=court_corners)
 
-    def start_source(self, source: Path) -> LiveExperimentSession:
+    def start_source(
+        self,
+        source: Path,
+        *,
+        court_corners: list[list[float]] | None = None,
+    ) -> LiveExperimentSession:
         with self._lock:
             if self._session is not None and self._session.snapshot().get("state") in {
                 "preparing", "connecting", "running", "reconnecting",
@@ -908,7 +931,7 @@ class LiveExperimentManager:
                 return self._session
             if not source.is_file():
                 raise RuntimeError("实时实验素材不存在")
-            self._session = LiveExperimentSession(source)
+            self._session = LiveExperimentSession(source, court_corners=court_corners)
             self._session.start()
             return self._session
 
@@ -919,6 +942,7 @@ class LiveExperimentManager:
         fps_hint: float = 30.0,
         source_name: str = "camera",
         result_session_id: str = "",
+        court_corners: list[list[float]] | None = None,
     ) -> LiveExperimentSession:
         """Analyze a camera-shaped RTMP stream without receiving its source file."""
         if not stream_name or any(
@@ -937,6 +961,7 @@ class LiveExperimentManager:
                 fps_hint=fps_hint,
                 source_name=source_name,
                 result_session_id=result_session_id,
+                court_corners=court_corners,
             )
             self._session.start()
             return self._session

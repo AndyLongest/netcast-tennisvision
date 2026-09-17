@@ -75,10 +75,13 @@ far-right, far-left order. Geometry validation runs before the paused job contin
 
 - `POST /api/live-lab/start` starts the bundled Demo on a temporary L40S when the trusted
   relay is in PPIO mode. Inside the isolated worker, `{source: external_rtmp}` arms a
-  subscriber for the trusted stream name; it never receives the source video.
+  subscriber for the trusted stream name; it never receives the source video. The JSON
+  body must include `court_corners`: four normalized `[x, y]` pairs ordered near-left,
+  near-right, far-right, far-left.
 - `POST /api/live-lab/upload` accepts original video bytes and `X-Filename`, validates the
   native frame rate, keeps the file on the camera-simulator host, then asynchronously
-  provisions L40S and returns a local session id. Once the worker reports
+  provisions L40S and returns a local session id. It requires the same corner array
+  serialized in `X-Court-Corners`. Once the worker reports
   `awaiting_stream`, local FFmpeg publishes the file at native speed to ZLMediaKit.
 - `GET /api/live-lab/status?session_id=...&after_event=N` returns measured ingest/analysis
   clocks, queue backlog, newly confirmed online events, the trusted per-session HTTP-fMP4

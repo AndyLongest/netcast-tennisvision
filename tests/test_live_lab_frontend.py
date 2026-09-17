@@ -51,6 +51,11 @@ def test_live_lab_exposes_real_chain_and_separate_offline_baseline() -> None:
     assert "courtWidth = 10.97, courtLength = 23.77" in script
     assert "courtW = courtH * (courtWidth / courtLength)" in script
     assert "marginY + (courtLength - metres) / courtLength * courtH" in script
+    assert 'id="liveCalibrationDialog"' in page
+    assert 'id="liveCalibrationCanvas"' in page
+    assert "openLiveCalibration(file)" in script
+    assert "JSON.stringify({court_corners: corners})" in script
+    assert "'X-Court-Corners': JSON.stringify(corners)" in script
 
 
 def test_expired_live_session_returns_to_clean_idle_page() -> None:

@@ -58,7 +58,7 @@ class PPIOJobManager:
         self.shared_secret = os.environ.get("TENNISVISION_CLOUD_TOKEN", "").strip()
         self.image = os.environ.get(
             "TENNISVISION_PPIO_IMAGE",
-            "image.ppinfra.com/prod-ahskpcitxxwcgdnfqfpu/netcast-tennisvision:production-v20",
+            "image.ppinfra.com/prod-ahskpcitxxwcgdnfqfpu/netcast-tennisvision:production-v21",
         ).strip()
         self.product_id = os.environ.get("TENNISVISION_PPIO_PRODUCT_ID", "L40S.22c125g")
         self.cluster_id = os.environ.get("TENNISVISION_PPIO_CLUSTER_ID", "cn-south-1")
@@ -946,6 +946,10 @@ class PPIOLiveJobManager(PPIOJobManager):
                 fps = float(upload_headers.get("X-Fps", "30"))
             except ValueError:
                 fps = 30.0
+            try:
+                court_corners = json.loads(upload_headers["X-Court-Corners"])
+            except (KeyError, TypeError, json.JSONDecodeError) as exc:
+                raise CloudLifecycleError("实时实验缺少已确认的球场四角") from exc
             start_body = json.dumps(
                 {
                     "source": "external_rtmp",
@@ -953,6 +957,7 @@ class PPIOLiveJobManager(PPIOJobManager):
                     "fps": fps,
                     "filename": upload_headers.get("X-Filename", clip.name),
                     "result_session_id": local_session_id,
+                    "court_corners": court_corners,
                 }
             ).encode("utf-8")
             status, started = self._remote_request(

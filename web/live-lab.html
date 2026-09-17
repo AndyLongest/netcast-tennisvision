@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#150c20" />
   <meta name="description" content="Netcast TennisVision 实时落点实验台：把比赛视频按直播时间轴播放，并观察落点事件的确认延迟。" />
   <title>实时落点实验 · Netcast TennisVision</title>
-  <link rel="stylesheet" href="live-lab.css?v=20260917g" />
+  <link rel="stylesheet" href="live-lab.css?v=20260917h" />
 </head>
 <body>
   <header class="lab-topbar">
@@ -130,7 +130,19 @@
     </section>
   </main>
 
+  <dialog class="live-calibration-dialog" id="liveCalibrationDialog">
+    <div class="live-calibration-head">
+      <div><span>开始前确认</span><h2>请确认球场四个底线角点</h2><p>这四点将直接用于 L40S 的落点坐标映射，不会只停留在预览画面。</p></div>
+      <button type="button" id="liveCalibrationClose" aria-label="关闭">×</button>
+    </div>
+    <div class="live-calibration-step"><strong id="liveCalibrationStep">第 1 步：点击近端左角</strong><button type="button" id="liveCalibrationReset">重新标记</button></div>
+    <div class="live-calibration-canvas-wrap"><canvas id="liveCalibrationCanvas"></canvas></div>
+    <p class="live-calibration-order">顺序：近端左角 → 近端右角 → 远端右角 → 远端左角</p>
+    <button class="live-calibration-confirm" id="liveCalibrationConfirm" type="button" disabled>确认球场，启动真实链路</button>
+    <video id="liveCalibrationVideo" muted playsinline preload="metadata" hidden></video>
+  </dialog>
+
   <div class="toast" id="labToast" role="status" aria-live="polite"></div>
-  <script src="live-lab.js?v=20260917j"></script>
+  <script src="live-lab.js?v=20260917k"></script>
 </body>
 </html>
