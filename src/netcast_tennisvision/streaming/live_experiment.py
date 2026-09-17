@@ -396,7 +396,9 @@ class LiveExperimentSession:
                         "-flags", "low_delay", "-i", stream_url,
                         "-map", "0:v:0", "-an",
                         "-vf", f"scale={live_width}:{live_height}:flags=fast_bilinear",
-                        "-pix_fmt", "bgr24", "-fps_mode", "passthrough",
+                        # ``-vsync 0`` is the passthrough spelling supported by the
+                        # Ubuntu FFmpeg bundled in the production image.
+                        "-pix_fmt", "bgr24", "-vsync", "0",
                         "-f", "rawvideo", "pipe:1",
                     ],
                     stdout=subprocess.PIPE,
@@ -420,6 +422,7 @@ class LiveExperimentSession:
                 )
 
             deadline = time.monotonic() + (120.0 if external_stream else 12.0)
+            last_decoder_error = ""
             while time.monotonic() < deadline and not self._stop.is_set():
                 if external_stream:
                     stream_decoder = open_stream_decoder()
@@ -429,6 +432,15 @@ class LiveExperimentSession:
                         break
                     if stream_decoder.poll() is None:
                         stream_decoder.terminate()
+                        try:
+                            stream_decoder.wait(timeout=2)
+                        except subprocess.TimeoutExpired:
+                            stream_decoder.kill()
+                            stream_decoder.wait(timeout=2)
+                    if stream_decoder.stderr is not None:
+                        last_decoder_error = stream_decoder.stderr.read().decode(
+                            "utf-8", errors="replace"
+                        ).strip()
                     stream_decoder = None
                 else:
                     capture = cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG)
@@ -450,7 +462,10 @@ class LiveExperimentSession:
                 if self._stop.is_set():
                     self._update(state="stopped", stage="实验已停止")
                     return
-                raise RuntimeError("等待摄像头推流超时，未能从 ZLMediaKit 拉回画面")
+                detail = f"：{last_decoder_error}" if last_decoder_error else ""
+                raise RuntimeError(
+                    f"等待摄像头推流超时，未能从 ZLMediaKit 拉回画面{detail}"
+                )
 
             prefetched_frames = [first_frame]
             if external_stream:
