@@ -50,3 +50,13 @@ def test_live_lab_exposes_real_chain_and_separate_offline_baseline() -> None:
     assert "courtWidth = 10.97, courtLength = 23.77" in script
     assert "courtW = courtH * (courtWidth / courtLength)" in script
     assert "marginY + (courtLength - metres) / courtLength * courtH" in script
+
+
+def test_expired_live_session_returns_to_clean_idle_page() -> None:
+    script = (ROOT / "web" / "live-lab.js").read_text(encoding="utf-8")
+
+    assert "function restoreIdleLab" in script
+    assert "sessionStorage.removeItem('netcastLiveSession')" in script
+    assert "history.replaceState(null, '', window.location.pathname)" in script
+    assert "restoreIdleLab('上一次实验已经结束，请开始新的测试')" in script
+    assert "window.scrollTo({top: 0, left: 0, behavior: 'instant'})" in script

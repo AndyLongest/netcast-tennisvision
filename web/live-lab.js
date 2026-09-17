@@ -1,6 +1,7 @@
 const byId = (id) => document.getElementById(id);
 const DEMO_VIDEO = '../assets/demo/demo.mp4';
 const DEMO_REPORT = '../assets/demo/scene3d.json';
+const MAX_MISSING_POLLS = 12;
 const state = {
   mode: null, report: null, delivered: [], nextEvent: 0, activeRally: null,
   animationFrame: 0, flashTimer: 0, sessionId: null, eventCursor: 0,
@@ -13,6 +14,35 @@ function rememberLiveSession(sessionId) {
   state.sessionId = sessionId;
   state.missingPolls = 0;
   if (sessionId) sessionStorage.setItem('netcastLiveSession', sessionId);
+}
+
+function restoreIdleLab(message = '') {
+  clearTimeout(state.pollTimer);
+  cancelAnimationFrame(state.animationFrame);
+  closeLivePlayback();
+  state.sessionId = null;
+  state.mode = null;
+  state.missingPolls = 0;
+  sessionStorage.removeItem('netcastLiveSession');
+  history.replaceState(null, '', window.location.pathname);
+  resetTimeline();
+  resetRouteFlow();
+  setRoutePhase('idle');
+  setRunning(false, '待开始');
+  byId('sourceClock').textContent = '00:00.000';
+  byId('resultClock').textContent = '00:00.000';
+  byId('videoHudClock').textContent = '00:00.000';
+  byId('sourceName').textContent = '尚未选择视频';
+  byId('videoPlaceholder').hidden = false;
+  byId('analysisEmpty').hidden = false;
+  byId('analysisEmpty').querySelector('strong').textContent = '分析画面尚未开始';
+  byId('analysisEmpty').querySelector('span').textContent = '落点只会在确认后出现，不会提前剧透';
+  byId('playButton').disabled = true;
+  byId('restartButton').disabled = true;
+  byId('measuredBadge').classList.remove('live');
+  byId('measuredBadge').textContent = '尚未开始实测';
+  window.scrollTo({top: 0, left: 0, behavior: 'instant'});
+  if (message) toast(message);
 }
 
 function formatClock(seconds) {
@@ -326,10 +356,14 @@ async function pollLiveExperiment() {
     const url = `/api/live-lab/status?session_id=${encodeURIComponent(state.sessionId)}&after_event=${state.eventCursor}`;
     const response = await fetch(url, {cache: 'no-store'});
     const payload = await response.json();
-    if (response.status === 404 && state.missingPolls < 60) {
+    if (response.status === 404 && state.missingPolls < MAX_MISSING_POLLS) {
       state.missingPolls += 1;
       setRunning(true, '正在同步云端会话');
       state.pollTimer = setTimeout(pollLiveExperiment, 250);
+      return;
+    }
+    if (response.status === 404) {
+      restoreIdleLab('上一次实验已经结束，请开始新的测试');
       return;
     }
     if (!response.ok) throw new Error(payload.error || '实时状态读取失败');
@@ -501,6 +535,10 @@ drawCourt();
 const resumeSession = new URLSearchParams(window.location.search).get('session_id')
   || sessionStorage.getItem('netcastLiveSession');
 if (resumeSession) {
+  if (window.location.hash) {
+    history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+    window.scrollTo({top: 0, left: 0, behavior: 'instant'});
+  }
   rememberLiveSession(resumeSession);
   resetTimeline();
   setVisualMode('live');
