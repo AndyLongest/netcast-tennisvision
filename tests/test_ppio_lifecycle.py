@@ -207,3 +207,22 @@ def test_live_worker_receives_media_relay_from_runtime_config(tmp_path, monkeypa
         "TENNISVISION_ZLM_HOST": "relay.example",
         "TENNISVISION_ZLM_WEBRTC_ORIGIN": "https://media.example",
     }
+
+
+def test_live_upload_progress_keeps_browser_session_identity(tmp_path, monkeypatch):
+    monkeypatch.setenv("PPIO_API_KEY", "provider-secret")
+    monkeypatch.setenv("TENNISVISION_CLOUD_TOKEN", "relay-secret")
+    lifecycle = PPIOLiveJobManager(tmp_path)
+    lifecycle._local_session_id = "live-session"
+    lifecycle._write_json(
+        lifecycle.status_path,
+        {"session_id": "live-session", "events": [], "event_cursor": 0},
+    )
+
+    lifecycle._write_status("queued", 7, "正在上传（86%）")
+
+    payload = lifecycle.snapshot("live-session")
+    assert payload is not None
+    assert payload["state"] == "preparing"
+    assert payload["progress"] == 7
+    assert payload["session_id"] == "live-session"

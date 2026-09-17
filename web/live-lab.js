@@ -4,8 +4,14 @@ const DEMO_REPORT = '../assets/demo/scene3d.json';
 const state = {
   mode: null, report: null, delivered: [], nextEvent: 0, activeRally: null,
   animationFrame: 0, flashTimer: 0, sessionId: null, eventCursor: 0,
-  pollTimer: 0, playbackUrl: '', playbackConnecting: false, nextPlaybackRetryAt: 0,
+  pollTimer: 0, missingPolls: 0, playbackUrl: '', playbackConnecting: false, nextPlaybackRetryAt: 0,
 };
+
+function rememberLiveSession(sessionId) {
+  state.sessionId = sessionId;
+  state.missingPolls = 0;
+  if (sessionId) sessionStorage.setItem('netcastLiveSession', sessionId);
+}
 
 function formatClock(seconds) {
   const value = Math.max(0, Number(seconds) || 0);
@@ -118,7 +124,7 @@ async function startLiveExperiment() {
     const response = await fetch('/api/live-lab/start', {method: 'POST', cache: 'no-store'});
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || '无法启动端到端实验');
-    state.sessionId = payload.session_id;
+    rememberLiveSession(payload.session_id);
     state.eventCursor = 0;
     pollLiveExperiment();
   } catch (error) {
@@ -150,7 +156,7 @@ async function uploadLiveExperiment(file) {
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || '视频上传失败');
-    state.sessionId = payload.session_id;
+    rememberLiveSession(payload.session_id);
     state.eventCursor = 0;
     byId('analysisEmpty').querySelector('strong').textContent = '正在启动 L40S';
     byId('analysisEmpty').querySelector('span').textContent = '冷启动与云端传送完成后按原始速度播放';
@@ -170,8 +176,15 @@ async function pollLiveExperiment() {
     const url = `/api/live-lab/status?session_id=${encodeURIComponent(state.sessionId)}&after_event=${state.eventCursor}`;
     const response = await fetch(url, {cache: 'no-store'});
     const payload = await response.json();
+    if (response.status === 404 && state.missingPolls < 60) {
+      state.missingPolls += 1;
+      setRunning(true, '正在同步云端会话');
+      state.pollTimer = setTimeout(pollLiveExperiment, 250);
+      return;
+    }
     if (!response.ok) throw new Error(payload.error || '实时状态读取失败');
-    const running = ['preparing', 'connecting', 'running'].includes(payload.state);
+    state.missingPolls = 0;
+    const running = ['queued', 'preparing', 'connecting', 'running'].includes(payload.state);
     setRunning(running, payload.stage || (running ? '直播中' : '已完成'));
     byId('sourceClock').textContent = formatClock(payload.source_time);
     byId('videoHudClock').textContent = formatClock(payload.analysis_time);
@@ -327,3 +340,16 @@ video.addEventListener('pause', () => {if (state.mode === 'baseline') setRunning
 video.addEventListener('ended', () => {if (state.mode === 'baseline') setRunning(false, '已结束');});
 window.addEventListener('resize', drawCourt);
 drawCourt();
+
+const resumeSession = new URLSearchParams(window.location.search).get('session_id')
+  || sessionStorage.getItem('netcastLiveSession');
+if (resumeSession) {
+  rememberLiveSession(resumeSession);
+  resetTimeline();
+  setVisualMode('live');
+  setRunning(true, '正在恢复实验');
+  byId('analysisEmpty').hidden = false;
+  byId('analysisEmpty').querySelector('strong').textContent = '正在重新连接云端实验';
+  byId('analysisEmpty').querySelector('span').textContent = '刷新页面不会中断正在运行的 L40S';
+  pollLiveExperiment();
+}

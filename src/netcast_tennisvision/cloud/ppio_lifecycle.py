@@ -125,7 +125,8 @@ class PPIOJobManager:
             with self._lock:
                 self._instance_id = instance_id
             self._write_json(
-                self.runtime_path, {"instance_id": instance_id, "created_at": int(time.time())}
+                self.runtime_path,
+                {"instance_id": instance_id, "created_at": int(time.time())},
             )
             remote_url = self._wait_for_endpoint(instance_id)
             with self._lock:
@@ -870,7 +871,12 @@ class PPIOLiveJobManager(PPIOJobManager):
             with self._lock:
                 self._instance_id = instance_id
             self._write_json(
-                self.runtime_path, {"instance_id": instance_id, "created_at": int(time.time())}
+                self.runtime_path,
+                {
+                    "instance_id": instance_id,
+                    "session_id": local_session_id,
+                    "created_at": int(time.time()),
+                },
             )
             remote_url = self._wait_for_endpoint(instance_id)
             with self._lock:
@@ -955,6 +961,22 @@ class PPIOLiveJobManager(PPIOJobManager):
                 self._remote_session_id = ""
             if released:
                 self.runtime_path.unlink(missing_ok=True)
+
+    def _write_status(self, state: str, progress: int, stage: str) -> None:
+        """Keep the browser session addressable during chunked cloud uploads."""
+        payload = self._read_json(self.status_path)
+        payload.update(
+            state="preparing" if state == "queued" else state,
+            progress=progress,
+            stage=stage,
+            execution_target="cloud-live-l40s",
+        )
+        payload.setdefault("session_id", self._local_session_id)
+        payload.setdefault("source_time", 0.0)
+        payload.setdefault("analysis_time", 0.0)
+        payload.setdefault("events", [])
+        payload.setdefault("event_cursor", 0)
+        self._write_json(self.status_path, payload)
 
     def _stop_remote_live(self, remote_url: str, remote_session_id: str) -> None:
         body = json.dumps({"session_id": remote_session_id}).encode("utf-8")
