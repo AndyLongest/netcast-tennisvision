@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 from http.server import ThreadingHTTPServer
 
@@ -7,6 +8,7 @@ from netcast_tennisvision.streaming.result_relay import (
     ResultRelayPublisher,
     ResultRelayStore,
     _handler,
+    delete_result_snapshot,
     fetch_result_snapshot,
 )
 
@@ -35,6 +37,8 @@ def test_gpu_publishes_and_client_reads_only_through_result_relay(tmp_path) -> N
         assert payload["result_relay"] == "ecs"
         assert payload["processed_frames"] == 48
         assert payload["events"] == [{"id": 0, "frame": 42}]
+        assert delete_result_snapshot(base_url, token, "session_12345678") is True
+        assert fetch_result_snapshot(base_url, token, "session_12345678") is None
     finally:
         server.shutdown()
         thread.join(timeout=2)
@@ -48,3 +52,15 @@ def test_result_relay_rejects_cross_session_snapshot(tmp_path) -> None:
         assert "mismatch" in str(exc)
     else:
         raise AssertionError("cross-session snapshot was accepted")
+
+
+def test_result_relay_prunes_only_expired_snapshots(tmp_path) -> None:
+    store = ResultRelayStore(tmp_path)
+    store.put("session_old_1234", {"session_id": "session_old_1234"})
+    store.put("session_new_1234", {"session_id": "session_new_1234"})
+    os.utime(tmp_path / "session_old_1234.json", (800, 800))
+    os.utime(tmp_path / "session_new_1234.json", (950, 950))
+
+    assert store.prune_expired(100, now=1000) == 1
+    assert store.get("session_old_1234") is None
+    assert store.get("session_new_1234") is not None

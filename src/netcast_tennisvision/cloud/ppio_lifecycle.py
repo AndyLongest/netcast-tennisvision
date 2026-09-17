@@ -26,7 +26,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from netcast_tennisvision.streaming.result_relay import fetch_result_snapshot
+from netcast_tennisvision.streaming.result_relay import (
+    delete_result_snapshot,
+    fetch_result_snapshot,
+)
 
 PPIO_API = "https://api.ppio.com/gpu-instance/openapi/v1"
 REMOTE_OUTPUTS = {"scene3d.json": True, "rally3d.html": True, "corrected_clip.mp4": False}
@@ -1068,6 +1071,16 @@ class PPIOLiveJobManager(PPIOJobManager):
             if self._stop_event.is_set() and remote_url and remote_session_id:
                 self._stop_remote_live(remote_url, remote_session_id)
             released = self._release_instance(instance_id) if instance_id else True
+            # ECS is a transient result relay, not a report store. The final state is
+            # already durable in status_path. Delete the relay copy only after the GPU
+            # can no longer publish a late update; its TTL janitor covers hard crashes.
+            for attempt in range(3):
+                try:
+                    delete_result_snapshot(relay_url, relay_token, local_session_id)
+                    break
+                except (OSError, TimeoutError, urllib.error.URLError):
+                    if attempt < 2:
+                        time.sleep(0.25 * (attempt + 1))
             with self._lock:
                 self._instance_id = None
                 self._remote_url = None

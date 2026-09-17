@@ -269,7 +269,10 @@ FFmpeg publishes the clip at native speed to ZLMediaKit. The L40S receives only 
 unique stream name and pulls the same RTMP feed a production camera would expose.
 Status and events are written to ECS under the local session id and pulled back by the
 trusted local service. A relay outage fails visibly instead of bypassing ECS. Completion,
-failure and explicit stop terminate the local producer and release the instance.
+failure and explicit stop terminate the local producer, release the instance, and delete
+that session's ECS result snapshot after its final state has been persisted locally. The
+relay also removes snapshots older than 24 hours as a crash-only safety net, so the ECS
+cannot silently accumulate experiment results.
 
 Rendering first performs a one-frame NVENC preflight. A usable NVIDIA encoder receives the
 unchanged rendered frames with the `p4`/CQ20 quality profile; otherwise an on-demand cloud

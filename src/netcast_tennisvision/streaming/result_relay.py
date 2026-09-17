@@ -66,6 +66,23 @@ class ResultRelayStore:
             path.unlink(missing_ok=True)
         return existed
 
+    def prune_expired(self, max_age_seconds: float, *, now: float | None = None) -> int:
+        """Remove abandoned snapshots left by a crashed experiment client."""
+        cutoff = (time.time() if now is None else now) - max_age_seconds
+        deleted = 0
+        with self._lock:
+            for path in self.root.glob("*.json"):
+                if not SESSION_RE.fullmatch(path.stem):
+                    continue
+                try:
+                    if path.stat().st_mtime >= cutoff:
+                        continue
+                    path.unlink(missing_ok=True)
+                    deleted += 1
+                except FileNotFoundError:
+                    continue
+        return deleted
+
 
 def _handler(store: ResultRelayStore, token: str) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
@@ -225,6 +242,23 @@ def fetch_result_snapshot(base_url: str, token: str, session_id: str) -> dict[st
     return payload if isinstance(payload, dict) else None
 
 
+def delete_result_snapshot(base_url: str, token: str, session_id: str) -> bool:
+    """Delete one completed/failed experiment snapshot from the ECS relay."""
+    request = Request(
+        f"{base_url.rstrip('/')}/v1/sessions/{session_id}",
+        method="DELETE",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urlopen(request, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        if exc.code == HTTPStatus.NOT_FOUND:
+            return False
+        raise
+    return bool(payload.get("deleted")) if isinstance(payload, dict) else False
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Netcast ECS result relay")
     parser.add_argument("--host", default=os.environ.get("NETCAST_RESULT_HOST", "0.0.0.0"))
@@ -234,7 +268,17 @@ def main() -> None:
     token = os.environ.get("NETCAST_RESULT_TOKEN", "").strip()
     if len(token) < 24:
         raise SystemExit("NETCAST_RESULT_TOKEN must contain at least 24 characters")
-    server = ThreadingHTTPServer((args.host, args.port), _handler(ResultRelayStore(args.data), token))
+    store = ResultRelayStore(args.data)
+    max_age_seconds = max(300, int(os.environ.get("NETCAST_RESULT_MAX_AGE_SECONDS", "86400")))
+    store.prune_expired(max_age_seconds)
+
+    def janitor() -> None:
+        while True:
+            time.sleep(min(900, max_age_seconds))
+            store.prune_expired(max_age_seconds)
+
+    threading.Thread(target=janitor, name="result-relay-janitor", daemon=True).start()
+    server = ThreadingHTTPServer((args.host, args.port), _handler(store, token))
     server.serve_forever()
 
 

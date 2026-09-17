@@ -44,6 +44,11 @@ requires the bearer token. The L40S writes complete coalesced snapshots with `PU
 marks stored snapshots with `result_relay=ecs`, which the local lifecycle requires before
 showing or accepting a result.
 
+After the final snapshot has been copied to local status storage and the temporary GPU is
+stopped, the lifecycle deletes the ECS session resource. Normal completion, explicit stop,
+and failure all use the same cleanup path. A 24-hour relay-side TTL janitor removes only
+orphaned snapshots left by a client or network crash.
+
 The upload username, password, and namespace are shown in PPIO Console under Security
 Credentials -> Image Registry Upload Credentials.
 
