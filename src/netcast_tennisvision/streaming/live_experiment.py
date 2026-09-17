@@ -52,6 +52,8 @@ RUNTIME_CONFIG = ROOT / "data" / "live_lab_config.json"
 LAST_RESULT = ROOT / "data" / "live_lab_last.json"
 COURT_WIDTH_M = 10.97
 COURT_LENGTH_M = 23.77
+DEFAULT_LIVE_BATCH_SIZE = 16
+DEFAULT_PERSON_STRIDE = 4
 WORLD_CORNERS = np.asarray(
     [[0.0, 0.0], [COURT_WIDTH_M, 0.0], [COURT_WIDTH_M, COURT_LENGTH_M], [0.0, COURT_LENGTH_M]],
     dtype=np.float32,
@@ -171,6 +173,14 @@ def _person_boxes(result: Any) -> np.ndarray:
     confidence = boxes.conf.detach().cpu().numpy() if boxes.conf is not None else np.ones(len(xyxy))
     keep = (classes == 0) & (confidence >= 0.25)
     return np.asarray(xyxy[keep], dtype=np.float32).reshape(-1, 4)
+
+
+def _bounded_int_env(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        value = default
+    return max(minimum, min(maximum, value))
 
 
 class LiveExperimentSession:
@@ -336,6 +346,13 @@ class LiveExperimentSession:
             frame_window: deque[np.ndarray] = deque(maxlen=SEQUENCE_LENGTH)
             pending_inputs: list[np.ndarray] = []
             pending_frames: list[np.ndarray] = []
+            live_batch_size = _bounded_int_env(
+                "TENNISVISION_LIVE_BATCH_SIZE", DEFAULT_LIVE_BATCH_SIZE, 1, 64
+            )
+            person_stride = _bounded_int_env(
+                "TENNISVISION_LIVE_PERSON_STRIDE", DEFAULT_PERSON_STRIDE, 1, 12
+            )
+            last_person_boxes = np.empty((0, 4), dtype=np.float32)
             emitted_frames: set[int] = set()
             last_event_frame = -10_000
             rally_id = 0
@@ -343,7 +360,7 @@ class LiveExperimentSession:
             peak_backlog = 0.0
 
             def process_batch() -> None:
-                nonlocal last_event_frame, rally_id
+                nonlocal last_event_frame, rally_id, last_person_boxes
                 if not pending_inputs:
                     return
                 inputs = torch.from_numpy(np.stack(pending_inputs)).to(device, non_blocking=True)
@@ -360,21 +377,39 @@ class LiveExperimentSession:
                     )
                     for heatmap in heatmaps.float().cpu().numpy()
                 ]
-                person_results = person_model.predict(
-                    pending_frames, device=str(device), verbose=False, imgsz=640, conf=0.25,
-                    classes=[0],
-                )
                 first_index = len(frames_meta)
-                for candidates, result in zip(decoded, person_results, strict=True):
+                sampled_offsets = [
+                    offset
+                    for offset in range(len(pending_frames))
+                    if (first_index + offset) % person_stride == 0
+                ]
+                if not sampled_offsets and last_person_boxes.size == 0:
+                    sampled_offsets = [0]
+                sampled_results = person_model.predict(
+                    [pending_frames[offset] for offset in sampled_offsets],
+                    device=str(device), verbose=False, imgsz=640, conf=0.25, classes=[0],
+                ) if sampled_offsets else []
+                boxes_by_offset = {
+                    offset: _person_boxes(result)
+                    for offset, result in zip(sampled_offsets, sampled_results, strict=True)
+                }
+                active_boxes = last_person_boxes
+                for offset, candidates in enumerate(decoded):
+                    if offset in boxes_by_offset:
+                        active_boxes = boxes_by_offset[offset]
                     frames_meta.append({
                         "candidates": candidates,
-                        "person_boxes": _person_boxes(result),
+                        # A fixed-camera player cannot teleport between adjacent frames.
+                        # Hold the latest native-frame detection causally; do not
+                        # interpolate future evidence or alter any ball input frame.
+                        "person_boxes": active_boxes.copy(),
                         "is_court": True,
                         "corners": corners,
                         "M": world_to_image,
                         "M_inv": image_to_world,
                         "net_y_px": float(net_point[1]),
                     })
+                last_person_boxes = active_boxes
                 pending_inputs.clear()
                 pending_frames.clear()
 
@@ -440,7 +475,10 @@ class LiveExperimentSession:
                 self._update(detector_frames=len(frames_meta), tracker_frames=len(frames_meta),
                              batch_first_frame=first_index)
 
-            frame_queue: queue.Queue[tuple[int, bytes] | None] = queue.Queue()
+            # OpenCV already returns an independent ndarray for every decoded frame.
+            # Queue it directly: the previous implementation JPEG-encoded every frame
+            # and immediately decoded it again, wasting CPU while changing no model input.
+            frame_queue: queue.Queue[tuple[int, np.ndarray] | None] = queue.Queue()
             reader_done = threading.Event()
             ingested_frames = 0
 
@@ -450,23 +488,22 @@ class LiveExperimentSession:
                 incoming_index = 0
                 try:
                     while not self._stop.is_set():
-                        encoded_ok, encoded = cv2.imencode(
-                            ".jpg", incoming, [cv2.IMWRITE_JPEG_QUALITY, 92]
-                        )
-                        if encoded_ok:
-                            payload = encoded.tobytes()
-                            frame_queue.put((incoming_index, payload))
-                            ingested_frames = incoming_index + 1
-                            now = time.time()
-                            if now - last_preview >= 0.08:
-                                with self._lock:
-                                    self._latest_jpeg = payload
-                                last_preview = now
-                            self._update(
-                                source_time=ingested_frames / fps,
-                                ingested_frames=ingested_frames,
-                                queued_frames=max(0, ingested_frames - len(frames_meta)),
+                        frame_queue.put((incoming_index, incoming))
+                        ingested_frames = incoming_index + 1
+                        now = time.time()
+                        if now - last_preview >= 0.08:
+                            encoded_ok, encoded = cv2.imencode(
+                                ".jpg", incoming, [cv2.IMWRITE_JPEG_QUALITY, 88]
                             )
+                            if encoded_ok:
+                                with self._lock:
+                                    self._latest_jpeg = encoded.tobytes()
+                                last_preview = now
+                        self._update(
+                            source_time=ingested_frames / fps,
+                            ingested_frames=ingested_frames,
+                            queued_frames=max(0, ingested_frames - len(frames_meta)),
+                        )
                         ok, incoming = capture.read()
                         if not ok:
                             break
@@ -481,10 +518,7 @@ class LiveExperimentSession:
                 item = frame_queue.get()
                 if item is None:
                     break
-                _source_index, encoded = item
-                current_frame = cv2.imdecode(np.frombuffer(encoded, dtype=np.uint8), cv2.IMREAD_COLOR)
-                if current_frame is None:
-                    continue
+                _source_index, current_frame = item
                 resized = cv2.resize(current_frame, (MODEL_WIDTH, MODEL_HEIGHT))
                 frame_window.append(np.moveaxis(resized.astype(np.float32) / 255.0, -1, 0))
                 sequence = list(frame_window)
@@ -492,7 +526,7 @@ class LiveExperimentSession:
                     sequence.insert(0, sequence[0])
                 pending_inputs.append(np.concatenate([background_channels, *sequence], axis=0))
                 pending_frames.append(current_frame)
-                if len(pending_inputs) >= 4:
+                if len(pending_inputs) >= live_batch_size:
                     process_batch()
 
                 update_now = time.time()
@@ -507,6 +541,8 @@ class LiveExperimentSession:
                     ingest_delay_ms=max(
                         0.0, (update_now - producer_started - analysis_time) * 1000.0
                     ),
+                    live_batch_size=live_batch_size,
+                    person_stride=person_stride,
                 )
 
             process_batch()

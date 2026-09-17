@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from netcast_tennisvision.streaming.live_experiment import (
     LiveExperimentManager,
+    _bounded_int_env,
     _webrtc_origin,
     compare_landing_events,
 )
+
+
+def test_live_integer_tuning_is_bounded(monkeypatch) -> None:
+    monkeypatch.setenv("NETCAST_TEST_INTEGER", "999")
+    assert _bounded_int_env("NETCAST_TEST_INTEGER", 4, 1, 16) == 16
+    monkeypatch.setenv("NETCAST_TEST_INTEGER", "invalid")
+    assert _bounded_int_env("NETCAST_TEST_INTEGER", 4, 1, 16) == 4
 
 
 def test_live_manager_reuses_only_an_active_session(monkeypatch) -> None:
