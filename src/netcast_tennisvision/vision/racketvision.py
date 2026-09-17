@@ -23,6 +23,8 @@ import numpy as np
 import torch
 from torch import nn
 
+from .adaptive_ball import plan_event_preserving_frames, scout_frame_indices
+
 MODEL_WIDTH = 512
 MODEL_HEIGHT = 288
 SEQUENCE_LENGTH = 4
@@ -79,7 +81,7 @@ class RacketVisionBallTrack(nn.Module):
         self.up_block_3 = Double2DConv(channels * 3, channels)
         self.predictor = nn.Conv2d(channels, SEQUENCE_LENGTH, 1)
 
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+    def forward_sequence(self, inputs: torch.Tensor) -> torch.Tensor:
         level_1 = self.down_block_1(inputs)
         level_2 = self.down_block_2(nn.functional.max_pool2d(level_1, 2))
         level_3 = self.down_block_3(nn.functional.max_pool2d(level_2, 2))
@@ -93,7 +95,10 @@ class RacketVisionBallTrack(nn.Module):
         decoded = self.up_block_3(
             torch.cat([nn.functional.interpolate(decoded, scale_factor=2), level_1], dim=1)
         )
-        return torch.sigmoid(self.predictor(decoded)[:, -1])
+        return torch.sigmoid(self.predictor(decoded))
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        return self.forward_sequence(inputs)[:, -1]
 
 
 def sha256(path: Path) -> str:
@@ -298,6 +303,87 @@ def _prepared_input_batches(
         capture.release()
 
 
+def _prepared_selected_input_batches(
+    video: Path, background_channels: np.ndarray,
+    selected_frames: set[int] | frozenset[int], batch_size: int,
+) -> Iterator[tuple[list[int], np.ndarray]]:
+    capture = cv2.VideoCapture(str(video))
+    if not capture.isOpened():
+        raise RuntimeError(f"无法打开视频：{video}")
+    wanted, window = set(map(int, selected_frames)), deque(maxlen=SEQUENCE_LENGTH)
+    indices: list[int] = []
+    inputs: list[np.ndarray] = []
+    frame_index = 0
+    try:
+        while True:
+            ok, frame = capture.read()
+            if not ok:
+                break
+            resized = cv2.resize(frame, (MODEL_WIDTH, MODEL_HEIGHT))
+            window.append(np.moveaxis(resized.astype(np.float32) / 255.0, -1, 0))
+            if frame_index in wanted:
+                sequence = list(window)
+                while len(sequence) < SEQUENCE_LENGTH:
+                    sequence.insert(0, sequence[0])
+                indices.append(frame_index)
+                inputs.append(np.concatenate([background_channels, *sequence], axis=0))
+                if len(inputs) >= batch_size:
+                    yield indices, np.stack(inputs)
+                    indices, inputs = [], []
+            frame_index += 1
+        if inputs:
+            yield indices, np.stack(inputs)
+    finally:
+        capture.release()
+
+
+def _prepared_grouped_input_batches(
+    video: Path, background_channels: np.ndarray, batch_size: int,
+) -> Iterator[tuple[list[list[int]], np.ndarray]]:
+    capture = cv2.VideoCapture(str(video))
+    if not capture.isOpened():
+        raise RuntimeError(f"无法打开视频：{video}")
+    batch_indices: list[list[int]] = []
+    batch_inputs: list[np.ndarray] = []
+    frames: list[np.ndarray] = []
+    indices: list[int] = []
+    frame_index = 0
+
+    def finish_group() -> tuple[list[list[int]], np.ndarray] | None:
+        nonlocal batch_indices, batch_inputs, frames, indices
+        if not frames:
+            return None
+        while len(frames) < SEQUENCE_LENGTH:
+            frames.append(frames[-1])
+        batch_indices.append(indices.copy())
+        batch_inputs.append(np.concatenate([background_channels, *frames], axis=0))
+        frames, indices = [], []
+        if len(batch_inputs) < batch_size:
+            return None
+        result = batch_indices, np.stack(batch_inputs)
+        batch_indices, batch_inputs = [], []
+        return result
+
+    try:
+        while True:
+            ok, frame = capture.read()
+            if not ok:
+                break
+            resized = cv2.resize(frame, (MODEL_WIDTH, MODEL_HEIGHT))
+            frames.append(np.moveaxis(resized.astype(np.float32) / 255.0, -1, 0))
+            indices.append(frame_index)
+            frame_index += 1
+            if len(frames) == SEQUENCE_LENGTH:
+                if (ready := finish_group()) is not None:
+                    yield ready
+        if (ready := finish_group()) is not None:
+            yield ready
+        if batch_inputs:
+            yield batch_indices, np.stack(batch_inputs)
+    finally:
+        capture.release()
+
+
 def _input_batches(
     video: Path,
     background_channels: np.ndarray,
@@ -424,6 +510,279 @@ def detect_video_candidates(
         f"RacketVision: {detected}/{len(candidates)} frames have a public-model candidate "
         f"({len(candidates) / max(elapsed, 1e-9):.1f} fps, batch={batch_size}, "
         f"prefetch={int(bool(prefetch))})",
+        flush=True,
+    )
+    return candidates
+
+
+def detect_video_candidates_adaptive(
+    video: Path,
+    checkpoint: Path,
+    cache_dir: Path,
+    frame_metadata: list[dict],
+    *,
+    device: str = "cuda",
+    threshold: float = DEFAULT_THRESHOLD,
+    batch_size: int | None = None,
+    max_candidates: int = 1,
+    alternative_threshold: float | None = None,
+    scout_stride: int = 2,
+    context_signature: str = "",
+    progress: ProgressCallback | None = None,
+) -> list[list[tuple[float, ...]]]:
+    """Run a sparse scout and recover native-rate windows around possible events.
+
+    Output contains one row for every source frame. Empty rows outside inferred
+    timestamps are intentional missing observations; the tracker may coast across them.
+    Every actual model invocation still consumes the original four consecutive frames.
+    """
+    if batch_size is None:
+        batch_size = int(os.environ.get("TENNISVISION_RACKETVISION_BATCH_SIZE", DEFAULT_BATCH_SIZE))
+    batch_size = max(1, int(batch_size))
+    scout_stride = max(1, int(scout_stride))
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    source_width, source_height, total_frames = _metadata(video)
+    if len(frame_metadata) != total_frames:
+        raise ValueError(
+            f"自适应球检测需要逐帧人物上下文：视频{total_frames}帧，上下文{len(frame_metadata)}帧"
+        )
+    stat = video.stat()
+    identity = (
+        f"{stat.st_size}:{stat.st_mtime_ns}:{sha256(checkpoint)}:{threshold}:"
+        f"{MODEL_WIDTH}x{MODEL_HEIGHT}:rv3-event-adaptive-v2:s{scout_stride}:"
+        f"b{batch_size}:top{max_candidates}:alt{alternative_threshold}:{context_signature}"
+    )
+    cache_path = cache_dir / f"racketvision_adaptive_{hashlib.sha256(identity.encode()).hexdigest()[:24]}.pkl"
+    if cache_path.exists():
+        with cache_path.open("rb") as stream:
+            return pickle.load(stream)
+
+    background = _median_background(video, total_frames)
+    background_channels = np.moveaxis(background.astype(np.float32) / 255.0, -1, 0)
+    scale_x = source_width / MODEL_WIDTH
+    scale_y = source_height / MODEL_HEIGHT
+    capture = cv2.VideoCapture(str(video))
+    fps = float(capture.get(cv2.CAP_PROP_FPS) or 30.0)
+    capture.release()
+    runtime_device = torch.device(
+        device if str(device).startswith("cuda") and torch.cuda.is_available() else "cpu"
+    )
+    model = load_model(checkpoint, runtime_device)
+    candidates: list[list[tuple[float, ...]]] = [[] for _ in range(total_frames)]
+    started = time.perf_counter()
+
+    def infer(selected: set[int] | frozenset[int]) -> None:
+        for frame_indices, prepared in _prepared_selected_input_batches(
+                video, background_channels, selected, batch_size):
+            inputs = torch.from_numpy(prepared).to(runtime_device, non_blocking=True)
+            with torch.inference_mode():
+                if runtime_device.type == "cuda":
+                    with torch.autocast("cuda", dtype=torch.float16):
+                        heatmaps = model(inputs)
+                else:
+                    heatmaps = model(inputs)
+            for frame_index, heatmap in zip(
+                    frame_indices, heatmaps.float().cpu().numpy(), strict=True):
+                candidates[frame_index] = _decode_candidates(
+                    heatmap, threshold, scale_x, scale_y,
+                    max_candidates=max_candidates,
+                    alternative_threshold=alternative_threshold,
+                )
+
+    scout = scout_frame_indices(total_frames, scout_stride)
+    infer(scout)
+    if progress is not None:
+        progress(max(1, int(total_frames * 0.45)), total_frames)
+    plan = plan_event_preserving_frames(
+        candidates, frame_metadata, fps=fps, stride=scout_stride,
+    )
+    recovery = plan.dense_frames - scout
+    infer(recovery)
+    if runtime_device.type == "cuda":
+        torch.cuda.empty_cache()
+    if progress is not None:
+        progress(total_frames, total_frames)
+
+    temporary = cache_path.with_suffix(f".{os.getpid()}.tmp")
+    with temporary.open("wb") as stream:
+        pickle.dump(candidates, stream, protocol=pickle.HIGHEST_PROTOCOL)
+    os.replace(temporary, cache_path)
+    elapsed = time.perf_counter() - started
+    inferred = len(plan.inference_frames)
+    detected = sum(bool(row) for row in candidates)
+    print(
+        f"RacketVision adaptive: inferred {inferred}/{total_frames} frames "
+        f"({100.0 * inferred / max(total_frames, 1):.1f}%), {detected} candidates, "
+        f"{elapsed:.1f}s; guards={plan.reasons}",
+        flush=True,
+    )
+    return candidates
+
+
+def detect_video_candidates_grouped(
+    video: Path,
+    checkpoint: Path,
+    cache_dir: Path,
+    *,
+    device: str = "cuda",
+    threshold: float = DEFAULT_THRESHOLD,
+    batch_size: int | None = None,
+    max_candidates: int = 1,
+    alternative_threshold: float | None = None,
+    progress: ProgressCallback | None = None,
+) -> list[list[tuple[float, ...]]]:
+    """Decode all four trained heatmaps from each non-overlapping model window.
+
+    This preserves one candidate row per native source frame while reducing temporal
+    window forward passes by approximately four.  It is an opt-in A/B path until event
+    regression proves that non-causal within-window context preserves production output.
+    """
+    if batch_size is None:
+        batch_size = int(os.environ.get("TENNISVISION_RACKETVISION_BATCH_SIZE", DEFAULT_BATCH_SIZE))
+    batch_size = max(1, int(batch_size))
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    source_width, source_height, total_frames = _metadata(video)
+    stat = video.stat()
+    identity = (
+        f"{stat.st_size}:{stat.st_mtime_ns}:{sha256(checkpoint)}:{threshold}:"
+        f"{MODEL_WIDTH}x{MODEL_HEIGHT}:rv3-grouped4-v1:b{batch_size}:"
+        f"top{max_candidates}:alt{alternative_threshold}"
+    )
+    cache_path = cache_dir / f"racketvision_grouped_{hashlib.sha256(identity.encode()).hexdigest()[:24]}.pkl"
+    if cache_path.exists():
+        with cache_path.open("rb") as stream:
+            return pickle.load(stream)
+
+    background = _median_background(video, total_frames)
+    background_channels = np.moveaxis(background.astype(np.float32) / 255.0, -1, 0)
+    scale_x = source_width / MODEL_WIDTH
+    scale_y = source_height / MODEL_HEIGHT
+    runtime_device = torch.device(
+        device if str(device).startswith("cuda") and torch.cuda.is_available() else "cpu"
+    )
+    model = load_model(checkpoint, runtime_device)
+    candidates: list[list[tuple[float, ...]]] = [[] for _ in range(total_frames)]
+    completed = 0
+    started = time.perf_counter()
+    for grouped_indices, prepared in _prepared_grouped_input_batches(
+            video, background_channels, batch_size):
+        inputs = torch.from_numpy(prepared).to(runtime_device, non_blocking=True)
+        with torch.inference_mode():
+            if runtime_device.type == "cuda":
+                with torch.autocast("cuda", dtype=torch.float16):
+                    grouped_heatmaps = model.forward_sequence(inputs)
+            else:
+                grouped_heatmaps = model.forward_sequence(inputs)
+        for source_indices, heatmaps in zip(
+                grouped_indices, grouped_heatmaps.float().cpu().numpy(), strict=True):
+            for frame_index, heatmap in zip(source_indices, heatmaps, strict=False):
+                candidates[frame_index] = _decode_candidates(
+                    heatmap, threshold, scale_x, scale_y,
+                    max_candidates=max_candidates,
+                    alternative_threshold=alternative_threshold,
+                )
+                completed += 1
+        if progress is not None:
+            progress(completed, total_frames)
+    if runtime_device.type == "cuda":
+        torch.cuda.empty_cache()
+    if progress is not None:
+        progress(total_frames, total_frames)
+
+    temporary = cache_path.with_suffix(f".{os.getpid()}.tmp")
+    with temporary.open("wb") as stream:
+        pickle.dump(candidates, stream, protocol=pickle.HIGHEST_PROTOCOL)
+    os.replace(temporary, cache_path)
+    elapsed = time.perf_counter() - started
+    detected = sum(bool(row) for row in candidates)
+    windows = (total_frames + SEQUENCE_LENGTH - 1) // SEQUENCE_LENGTH
+    print(
+        f"RacketVision grouped4: {detected}/{total_frames} candidate frames from "
+        f"{windows} temporal windows in {elapsed:.1f}s "
+        f"({total_frames / max(elapsed, 1e-9):.1f} source fps)",
+        flush=True,
+    )
+    return candidates
+
+
+def detect_video_candidates_selected(
+    video: Path,
+    checkpoint: Path,
+    cache_dir: Path,
+    selected_frames: set[int] | frozenset[int],
+    *,
+    device: str = "cuda",
+    threshold: float = DEFAULT_THRESHOLD,
+    batch_size: int | None = None,
+    max_candidates: int = 1,
+    alternative_threshold: float | None = None,
+    cache_label: str = "selected",
+    progress: ProgressCallback | None = None,
+) -> list[list[tuple[float, ...]]]:
+    """Infer exact causal BallTrack outputs only at requested native timestamps."""
+    if batch_size is None:
+        batch_size = int(os.environ.get("TENNISVISION_RACKETVISION_BATCH_SIZE", DEFAULT_BATCH_SIZE))
+    batch_size = max(1, int(batch_size))
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    source_width, source_height, total_frames = _metadata(video)
+    selected = frozenset(int(frame) for frame in selected_frames if 0 <= int(frame) < total_frames)
+    selection_hash = hashlib.sha256(
+        np.asarray(sorted(selected), dtype=np.int32).tobytes()
+    ).hexdigest()[:16]
+    stat = video.stat()
+    identity = (
+        f"{stat.st_size}:{stat.st_mtime_ns}:{sha256(checkpoint)}:{threshold}:"
+        f"{MODEL_WIDTH}x{MODEL_HEIGHT}:rv3-selected-v1:b{batch_size}:"
+        f"top{max_candidates}:alt{alternative_threshold}:{cache_label}:{selection_hash}"
+    )
+    cache_path = cache_dir / f"racketvision_selected_{hashlib.sha256(identity.encode()).hexdigest()[:24]}.pkl"
+    if cache_path.exists():
+        with cache_path.open("rb") as stream:
+            return pickle.load(stream)
+
+    background = _median_background(video, total_frames)
+    background_channels = np.moveaxis(background.astype(np.float32) / 255.0, -1, 0)
+    scale_x = source_width / MODEL_WIDTH
+    scale_y = source_height / MODEL_HEIGHT
+    runtime_device = torch.device(
+        device if str(device).startswith("cuda") and torch.cuda.is_available() else "cpu"
+    )
+    model = load_model(checkpoint, runtime_device)
+    candidates: list[list[tuple[float, ...]]] = [[] for _ in range(total_frames)]
+    completed = 0
+    started = time.perf_counter()
+    for frame_indices, prepared in _prepared_selected_input_batches(
+            video, background_channels, selected, batch_size):
+        inputs = torch.from_numpy(prepared).to(runtime_device, non_blocking=True)
+        with torch.inference_mode():
+            if runtime_device.type == "cuda":
+                with torch.autocast("cuda", dtype=torch.float16):
+                    heatmaps = model(inputs)
+            else:
+                heatmaps = model(inputs)
+        for frame_index, heatmap in zip(
+                frame_indices, heatmaps.float().cpu().numpy(), strict=True):
+            candidates[frame_index] = _decode_candidates(
+                heatmap, threshold, scale_x, scale_y,
+                max_candidates=max_candidates,
+                alternative_threshold=alternative_threshold,
+            )
+            completed += 1
+        if progress is not None:
+            progress(completed, max(len(selected), 1))
+    if runtime_device.type == "cuda":
+        torch.cuda.empty_cache()
+    if progress is not None:
+        progress(max(len(selected), 1), max(len(selected), 1))
+
+    temporary = cache_path.with_suffix(f".{os.getpid()}.tmp")
+    with temporary.open("wb") as stream:
+        pickle.dump(candidates, stream, protocol=pickle.HIGHEST_PROTOCOL)
+    os.replace(temporary, cache_path)
+    elapsed = time.perf_counter() - started
+    print(
+        f"RacketVision {cache_label}: inferred {len(selected)}/{total_frames} frames in "
+        f"{elapsed:.1f}s ({len(selected) / max(elapsed, 1e-9):.1f} inferred fps)",
         flush=True,
     )
     return candidates

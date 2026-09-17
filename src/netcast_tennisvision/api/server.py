@@ -18,7 +18,7 @@ import uuid
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from netcast_tennisvision.cloud.ppio_lifecycle import CloudLifecycleError, PPIOJobManager
 from netcast_tennisvision.paths import REPOSITORY_ROOT
@@ -45,6 +45,17 @@ CLOUD_TIMEOUT_SECONDS = float(os.environ.get("TENNISVISION_CLOUD_TIMEOUT", "3600
 CLOUD_SHARED_SECRET = os.environ.get("TENNISVISION_CLOUD_SHARED_SECRET", "").strip()
 CLOUD_PROVIDER = os.environ.get("TENNISVISION_CLOUD_PROVIDER", "").strip().lower()
 cloud_manager = PPIOJobManager(ROOT, STATUS) if CLOUD_PROVIDER == "ppio" else None
+_live_experiment_manager = None
+
+
+def live_experiment_manager():
+    """Import the GPU experiment lazily so the ordinary upload UI stays lightweight."""
+    global _live_experiment_manager
+    if _live_experiment_manager is None:
+        from netcast_tennisvision.streaming.live_experiment import live_experiments
+
+        _live_experiment_manager = live_experiments
+    return _live_experiment_manager
 
 
 def read_json(path: Path) -> dict[str, object]:
@@ -200,6 +211,14 @@ class Handler(SimpleHTTPRequestHandler):
             "Access-Control-Allow-Origin",
             "null" if self.headers.get("Origin") == "null" else "http://127.0.0.1:4173",
         )
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_jpeg(self, body: bytes) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
         self.end_headers()
         self.wfile.write(body)
 
@@ -408,8 +427,29 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_json({"accepted": True, "index": index, "sha256": actual_hash})
 
     def do_GET(self) -> None:
-        request_path = urlparse(self.path).path
+        request = urlparse(self.path)
+        request_path = request.path
         if not self.cloud_request_authorized():
+            return
+        if request_path in {"/api/live-lab/status", "/api/live-lab/frame"}:
+            query = parse_qs(request.query)
+            session_id = query.get("session_id", [""])[0]
+            session = live_experiment_manager().get(session_id)
+            if session is None:
+                self.send_json({"error": "实时实验会话不存在或已过期"}, HTTPStatus.NOT_FOUND)
+                return
+            if request_path.endswith("/frame"):
+                jpeg = session.jpeg()
+                if jpeg is None:
+                    self.send_error(HTTPStatus.NO_CONTENT)
+                else:
+                    self.send_jpeg(jpeg)
+                return
+            try:
+                after_event = max(0, int(query.get("after_event", ["0"])[0]))
+            except ValueError:
+                after_event = 0
+            self.send_json(session.snapshot(after_event))
             return
         if CLOUD_API_URL and (
             request_path.startswith("/api/") or request_path.startswith("/data/")
@@ -431,6 +471,36 @@ class Handler(SimpleHTTPRequestHandler):
         global job_process
         request_path = urlparse(self.path).path
         if not self.cloud_request_authorized():
+            return
+        if request_path == "/api/live-lab/start":
+            try:
+                session = live_experiment_manager().start_demo()
+                self.send_json(session.snapshot(), HTTPStatus.ACCEPTED)
+            except (OSError, RuntimeError, ValueError) as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.SERVICE_UNAVAILABLE)
+            return
+        if request_path == "/api/live-lab/webrtc-offer":
+            session_id = parse_qs(urlparse(self.path).query).get("session_id", [""])[0]
+            session = live_experiment_manager().get(session_id)
+            if session is None:
+                self.send_json({"error": "实时实验会话不存在或已过期"}, HTTPStatus.NOT_FOUND)
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= 256 * 1024:
+                    raise ValueError("WebRTC SDP 内容无效")
+                offer = self.rfile.read(length).decode("utf-8")
+                self.send_json(session.exchange_webrtc_offer(offer))
+            except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.BAD_GATEWAY)
+            return
+        if request_path == "/api/live-lab/stop":
+            try:
+                payload = self.read_bounded_json(maximum=4096)
+                stopped = live_experiment_manager().stop(str(payload.get("session_id", "")))
+                self.send_json({"stopped": stopped}, HTTPStatus.OK if stopped else HTTPStatus.NOT_FOUND)
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
             return
         if CLOUD_API_URL and request_path in {"/api/analyze", "/api/court-calibration"}:
             self.proxy_cloud_request("POST")

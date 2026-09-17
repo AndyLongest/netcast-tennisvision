@@ -5,6 +5,13 @@ remote uploads are added to the product. It deliberately accepts only the bundle
 `assets/demo/demo.mp4`, so the first measurement isolates GPU inference and rendering
 from object-storage transfer time.
 
+The internal live-lab can also run this bundled source as a real RTMP stream on a
+temporary GPU instance. That experiment does not upload or download a finished video:
+the worker pulls the configured ZLMediaKit stream and returns only live status and landing
+events. When RTX 4090 inventory is unavailable, the same frozen code path may be measured
+on the explicitly selected L40S product; results must name the actual GPU and may not be
+reported as a 4090 benchmark.
+
 The first completed server measurement is recorded in
 [`experiments/PPIO_BENCHMARK_2026-09-15.md`](experiments/PPIO_BENCHMARK_2026-09-15.md). Use its first-processing
 number for capacity planning; its faster exact-video repeat intentionally includes

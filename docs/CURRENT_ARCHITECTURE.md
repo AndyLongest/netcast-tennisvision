@@ -124,9 +124,13 @@ the manual timestamp windows. UI-only work must not alter inference or event dat
   people to travel between their measured court positions at a 12m/s upper bound.
 - Missing or ambiguous samples preserve the last stable identity and confidence. They do
   not create a new identity and cannot make a landing marker change colour by themselves.
-- A confirmed landing inherits the stable identity at the preceding racket contact. Only
-  a clip whose contact occurred before its first frame uses the opposite-landing-half
-  fallback.
+- A/B-to-side mapping is selected by confidence-weighted tracklet consensus and frozen
+  for the complete rally. Appearance noise cannot switch marker colours during a point;
+  a different mapping may only take effect after a rally boundary.
+- A confirmed first landing uses its court half to corroborate the preceding hitter: a
+  normal touchdown was struck from the opposite half. This repairs a single-frame racket
+  proximity error without changing the ball track, touchdown position or landing class.
+  The correction source and whether the hit side disagreed remain exported for audit.
 
 ## Play-mode routing
 
@@ -168,6 +172,21 @@ the same regression it restores one coherent rejected-candidate fragment: a far-
 touchdown at 25.91s followed by the receiver's racket contact, producing 29 bounces and 35
 hits. Three opposite-player contact intervals lacking physical ground evidence remain
 landing-free as possible volleys. Set `TENNISVISION_RALLY_RECOVERY=0` for an exact rollback.
+
+## In/out line-call policy
+
+Line calls consume the confirmed touchdown and never move it. The legal singles or
+doubles rectangle uses the ITF outside edge of the painted lines. A physical ball radius
+is included because touching a line is in. Touchdown and court-fit pixel uncertainty are
+propagated through the inverse homography at that exact image location, so a far-court
+pixel is not treated as the same number of metres as a near-court pixel.
+
+The exported `line_call` is `in`, `out`, or `review`. An automatic call is made only when
+the full uncertainty interval agrees. A close call whose interval crosses the boundary is
+`review`: it receives neither a yellow in-zone flash nor a red out cross. This preserves
+useful automatic calls on limited-quality video without fabricating centimetre precision.
+The implementation is isolated in `events/line_call.py` and cannot alter tracking,
+touchdown timing, or landing coordinates.
 
 ## Court-calibration fallback
 
@@ -220,7 +239,7 @@ Production cloud releases use `Dockerfile.release`: a thin code overlay on the a
 `production-v1` ML runtime. The legacy image stores frozen weights in
 `/opt/netcast/models`; the release maps that directory to the canonical `/app/models`
 path and refuses to publish unless the ball, bounce, player-segmentation and
-player-identity checkpoints are all present. The relay currently pins `production-v8`. Short PPIO control-plane TLS
+player-identity checkpoints are all present. The relay currently pins `production-v10`. Short PPIO control-plane TLS
 disconnects while an existing instance starts are retried until the startup deadline;
 instance creation itself is never blindly retried because that could allocate two GPUs.
 

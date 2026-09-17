@@ -1,0 +1,62 @@
+from __future__ import annotations
+
+from netcast_tennisvision.streaming.live_experiment import (
+    LiveExperimentManager,
+    _webrtc_origin,
+    compare_landing_events,
+)
+
+
+def test_live_manager_reuses_only_an_active_session(monkeypatch) -> None:
+    started = []
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.id = str(len(started))
+            self.state = "preparing"
+
+        def start(self) -> None:
+            started.append(self)
+
+        def snapshot(self) -> dict[str, str]:
+            return {"state": self.state}
+
+    monkeypatch.setattr(
+        "netcast_tennisvision.streaming.live_experiment.LiveExperimentSession", FakeSession
+    )
+    manager = LiveExperimentManager()
+    first = manager.start_demo()
+    assert manager.start_demo() is first
+    first.state = "complete"
+    second = manager.start_demo()
+    assert second is not first
+    assert len(started) == 2
+
+
+def test_live_manager_rejects_unknown_session() -> None:
+    manager = LiveExperimentManager()
+    assert manager.get("missing") is None
+    assert manager.stop("missing") is False
+
+
+def test_live_comparison_requires_time_and_position_agreement() -> None:
+    reference = [
+        {"frame": 100, "x": 4.0, "y": 6.0},
+        {"frame": 200, "x": 7.0, "y": 18.0},
+    ]
+    online = [
+        {"frame": 103, "x": 4.2, "y": 6.1},
+        {"frame": 201, "x": 1.0, "y": 2.0},
+        {"frame": 450, "x": 7.0, "y": 18.0},
+    ]
+
+    result = compare_landing_events(online, reference, fps=30.0)
+
+    assert result["matched_events"] == 1
+    assert result["recall"] == 0.5
+    assert result["precision"] == 1 / 3
+
+
+def test_webrtc_origin_accepts_only_http_server_origins(monkeypatch) -> None:
+    monkeypatch.setenv("TENNISVISION_ZLM_WEBRTC_ORIGIN", "https://media.example.com")
+    assert _webrtc_origin("127.0.0.1") == "https://media.example.com"

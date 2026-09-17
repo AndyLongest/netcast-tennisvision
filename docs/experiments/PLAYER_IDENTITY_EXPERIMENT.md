@@ -13,9 +13,10 @@ notebook calls it after the ball/person vision pass and before contact attributi
 writes identity metadata only; it cannot alter ball candidates, trajectory coordinates,
 contact classification, or landing coordinates.
 
-Confirmed landings inherit the preceding hitter. If a clip begins after that strike,
-tennis-side logic assigns the hitter from the opposite half of the first landing. The
-fixed demo exercises two accepted side changes. All 35 hits and all 29 landings receive
+Confirmed landings use a confidence-weighted whole-rally A/B mapping and the landing half
+to corroborate the preceding hitter. A noisy single contact frame cannot swap a marker
+colour mid-rally; if a clip begins after the strike, the same landing-half evidence still
+resolves the hitter. The fixed demo exercises two accepted side changes. All 35 hits and all 29 landings receive
 an A/B owner; the landing markers split into 14 for A and 15 for B. The main trajectory
 remains 1220 positioned frames, including 1123 detector-backed observations.
 
@@ -61,6 +62,9 @@ advantage is an auditable margin, not a calibrated probability.
   https://arxiv.org/abs/1703.07402
 - BoT-SORT, 2022: jointly use motion, appearance and camera compensation:
   https://arxiv.org/abs/2206.14651
+- Global Tracklet Association, ACCV 2024 workshop: split unreliable sports tracks into
+  tracklets and reconnect them using appearance plus global temporal context:
+  https://openaccess.thecvf.com/content/ACCV2024W/MLCSA2024/html/Sun_GTA_Global_Tracklet_Association_for_Multi-Object_Tracking_in_Sports_ACCVW_2024_paper.html
 - Global ID Fusion, WACV 2026: separate short tracklets from global player identity and
   fuse them contextually: https://openaccess.thecvf.com/content/WACV2026/html/Wojtulewicz_Advancing_Player_Identification_and_Tracking_with_Global_ID_Fusion_GIF_WACV_2026_paper.html
 

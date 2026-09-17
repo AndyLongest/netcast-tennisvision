@@ -69,6 +69,25 @@ internal optimization endpoint, not a browser workflow.
 Accepts the current request ID and four image-space corners in near-left, near-right,
 far-right, far-left order. Geometry validation runs before the paused job continues.
 
+### Internal live-lab endpoints
+
+- `POST /api/live-lab/start` starts or reattaches to the single bundled-Demo experiment.
+- `GET /api/live-lab/status?session_id=...&after_event=N` returns measured ingest/analysis
+  clocks, queue backlog, newly confirmed online events, the trusted per-session HTTP-fMP4
+  playback URL and the final offline comparison.
+- `GET /api/live-lab/frame?session_id=...` returns the latest JPEG decoded from the RTMP
+  stream, not the source file. It is a diagnostics endpoint; the normal left-hand preview
+  plays the ZLMediaKit HTTP-fMP4 stream directly and does not poll this endpoint.
+- `POST /api/live-lab/stop` stops the named experiment session.
+
+These endpoints are an internal benchmark surface. The media service host is trusted
+server configuration (`TENNISVISION_ZLM_HOST` or ignored `data/live_lab_config.json`),
+never a browser-supplied URL. This avoids turning the local relay into an arbitrary
+network proxy.
+`TENNISVISION_ZLM_WEBRTC_ORIGIN` (or `zlm_webrtc_origin` in the same ignored config)
+selects the certificate-valid HTTP(S) media origin used by normal HTTP-fMP4 playback and
+the optional WebRTC diagnostic handshake.
+
 ## `scene3d.json`
 
 Top-level fields currently include:
@@ -95,9 +114,15 @@ Important bounce fields:
 | `source` | observed, interpolated/modelled, or recovered-candidate evidence |
 | `landing_confidence` | evidence score, not a calibrated probability |
 | `landing_uncertainty_px` | image-space uncertainty when available |
+| `line_call` | `in`, `out`, or `review`; only a fully supported `out` is rendered as a red cross |
+| `line_call_confidence` | margin beyond the uncertainty/review band; zero for review and not a calibrated probability |
+| `line_signed_margin_m` | positive centre distance inside the outside edge of the nearest legal line, negative outside |
+| `line_uncertainty_m` | local world-space uncertainty propagated through the inverse homography |
+| `line_nearest_boundary` | sideline/baseline (or corner pair) governing the call |
 | `player_id` | identity of the player whose preceding strike produced this landing |
 | `identity_confidence` | OSNet pair-assignment margin; not a calibrated probability |
-| `identity_source` | `preceding_hit` or the clipped-rally fallback `opposite_landing_half` |
+| `identity_rally_consensus` | share of confidence-weighted frames supporting the rally mapping |
+| `identity_source` | rally-tracklet consensus plus landing-half corroboration, or an explicit unresolved fallback |
 
 Hit records also expose `player_id` and `identity_confidence`. Identity is attached after
 tracking and touchdown decisions, so it is not an input to ball or landing accuracy.

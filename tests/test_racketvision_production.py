@@ -98,7 +98,9 @@ def test_notebook_exports_temporal_play_mode_and_uses_its_player_counts():
 def test_landing_feedback_contract_is_preserved():
     notebook = json.loads((ROOT / "notebooks/tennis_detection.ipynb").read_text("utf-8"))
     source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
-    assert 'flash_zones = [b for b in bounces if b["zone"] != "Out"]' in source
+    assert 'flash_zones = [b for b in bounces if b["line_call"] == "in"]' in source
+    assert "line_call = classify_line_call(" in source
+    assert '"line_call_review" if b["line_call"] == "review"' in source
     assert 'b["decision_frame"] + k' in source
     assert 'b["rally_id"] == active_rally' in source
-    assert 'b["zone"] == "Out"' in source
+    assert 'if line_call.call == "out"' in source

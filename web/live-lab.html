@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#150c20" />
+  <meta name="description" content="Netcast TennisVision 实时落点实验台：把比赛视频按直播时间轴播放，并观察落点事件的确认延迟。" />
+  <title>实时落点实验 · Netcast TennisVision</title>
+  <link rel="stylesheet" href="live-lab.css?v=20260916e" />
+</head>
+<body>
+  <header class="lab-topbar">
+    <a class="lab-brand" href="index.html" aria-label="返回 Netcast TennisVision 首页">
+      <img src="assets/netcast-mark.png" alt="" />
+      <span><strong>Netcast TennisVision</strong><small>REAL-TIME LANDING LAB</small></span>
+    </a>
+    <div class="lab-nav">
+      <span class="mode-badge"><i></i> 真实链路实验</span>
+      <a href="index.html">返回智能分析</a>
+    </div>
+  </header>
+
+  <main class="lab-main">
+    <section class="lab-controls" aria-label="实验素材">
+      <div><span class="eyebrow">内部实时验证</span><strong>选择实验素材</strong></div>
+      <div class="source-actions">
+        <button class="primary-action" id="startLiveButton"><span>▶</span> 开始真实端到端实验</button>
+        <button class="upload-action" id="useDemoButton"><span>◇</span> 查看离线基准回放</button>
+        <span class="chain-label">Demo → RTMP → ZLMediaKit → 在线推理 → 页面</span>
+      </div>
+    </section>
+
+    <section class="metric-strip" aria-label="实时指标">
+      <article><span>摄像头时间</span><strong id="sourceClock">00:00.000</strong><small>画面正在发生的位置</small></article>
+      <article><span>分析结果时间</span><strong id="resultClock">00:00.000</strong><small>算法已确认到的位置</small></article>
+      <article class="latency-metric"><span>当前处理积压</span><strong id="latencyValue">—</strong><small id="latencyDetail">等待真实链路</small></article>
+      <article><span>已确认落点</span><strong id="landingCount">0</strong><small id="landingDetail">当前回合 0 个</small></article>
+    </section>
+
+    <section class="live-grid">
+      <article class="screen-card source-card">
+        <div class="screen-heading">
+          <div><span>画面 A</span><h2>摄像头直播画面</h2></div>
+          <div class="live-state" id="liveState"><i></i><b>待开始</b></div>
+        </div>
+        <div class="video-stage">
+          <video id="liveVideo" playsinline autoplay muted preload="metadata"></video>
+          <img id="liveFrame" alt="从 ZLMediaKit 拉回的实时画面" hidden />
+          <div class="video-placeholder" id="videoPlaceholder"><i>▶</i><strong>选择 Demo 或上传一段视频</strong><span>视频会按照原始时间顺序播放</span></div>
+          <div class="video-hud"><span id="sourceName">尚未选择视频</span><time id="videoHudClock">00:00.000</time></div>
+          <div class="signal-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        </div>
+        <div class="transport-controls">
+          <button id="playButton" disabled>▶ 继续播放</button>
+          <button id="restartButton" disabled>↺ 从头重播</button>
+          <span class="measured-badge" id="measuredBadge">尚未开始实测</span>
+        </div>
+      </article>
+
+      <article class="screen-card result-card">
+        <div class="screen-heading">
+          <div><span>画面 B</span><h2>实时分析结果</h2></div>
+          <span class="engine-pill" id="enginePill"><i></i> 等待数据</span>
+        </div>
+        <div class="analysis-stage">
+          <canvas id="landingCourt" aria-label="当前回合实时落点图"></canvas>
+          <div class="analysis-empty" id="analysisEmpty"><i>⌁</i><strong>分析画面尚未开始</strong><span>落点只会在确认后出现，不会提前剧透</span></div>
+          <div class="decision-flash" id="decisionFlash"><span>落点已确认</span><strong id="flashZone">球员 A 落点</strong></div>
+          <div class="court-orientation" aria-hidden="true"><span>远端</span><span>近端</span></div>
+          <div class="player-legend" aria-label="落点颜色"><span><i class="player-a"></i>球员 A</span><span><i class="player-b"></i>球员 B</span><span><i class="review-ball"></i>待复核</span><span><i class="out-ball"></i>界外</span></div>
+        </div>
+        <div class="event-console">
+          <div class="console-heading"><span>实时事件流</span><small>只显示已经确认的事件</small></div>
+          <ol id="eventFeed"><li class="empty-feed">等待比赛开始…</li></ol>
+        </div>
+      </article>
+    </section>
+
+    <section class="latency-explainer" aria-label="延迟组成">
+      <div class="latency-flow" aria-label="延迟组成">
+        <span><small>01</small>Demo 原速编码</span><i>→</i><span><small>02</small>RTMP / ZLMediaKit<br /><b id="flowTransport">真实链路</b></span><i>→</i><span><small>03</small>逐帧模型与固定延迟判定<br /><b id="flowAnalysis">等待实测</b></span><i>→</i><span class="accent"><small>04</small>落点到达页面</span>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="labToast" role="status" aria-live="polite"></div>
+  <script src="live-lab.js?v=20260916g"></script>
+</body>
+</html>

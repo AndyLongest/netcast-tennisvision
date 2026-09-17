@@ -949,6 +949,7 @@ async function loadScene(path) {
     id: `b${index}`, number: index + 1, type: 'bounce', time: bounce.t,
     zone: ZONES[bounce.zone] || bounce.zone, rawZone: bounce.zone,
     x: bounce.x, y: bounce.y, confidence: bounce.landing_confidence,
+    lineCall: bounce.line_call || (bounce.zone === 'Out' ? 'out' : 'in'),
     playerId: bounce.player_id || null, rallyId: bounce.rally_id ?? null,
   }));
   const hits = state.scene.hits.map((hit, index) => ({
@@ -1065,9 +1066,12 @@ function applyRealMetrics() {
   const scene = state.scene;
   const trackedFrames = scene.frames.filter((frame) => Array.isArray(frame.b)).length;
   const trackRate = trackedFrames / Math.max(scene.n_frames, 1);
-  const valid = scene.bounces.filter((bounce) => bounce.zone !== 'Out');
-  const out = scene.bounces.length - valid.length;
-  const inRate = valid.length / Math.max(scene.bounces.length, 1);
+  const lineCall = (bounce) => bounce.line_call || (bounce.zone === 'Out' ? 'out' : 'in');
+  const valid = scene.bounces.filter((bounce) => lineCall(bounce) === 'in');
+  const out = scene.bounces.filter((bounce) => lineCall(bounce) === 'out').length;
+  const review = scene.bounces.filter((bounce) => lineCall(bounce) === 'review').length;
+  const decided = valid.length + out;
+  const inRate = valid.length / Math.max(decided, 1);
   const counts = valid.reduce((all, bounce) => { all[bounce.zone] = (all[bounce.zone] || 0) + 1; return all; }, {});
   const [dominantRaw = '—', dominantCount = 0] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0] || [];
   const dominant = ZONES[dominantRaw] || dominantRaw;
@@ -1080,7 +1084,7 @@ function applyRealMetrics() {
   const playMode = scene.play_mode?.label || '比赛模式';
 
   $('#bounceCount').textContent = scene.bounces.length;
-  $('#validBounceText').textContent = `${valid.length} 次界内 · ${out} 次界外`;
+  $('#validBounceText').textContent = `${valid.length} 次界内 · ${out} 次界外${review ? ` · ${review} 次待复核` : ''}`;
   $('#hitCount').textContent = scene.hits.length;
   $('#trackRate').textContent = `${Math.round(trackRate * 100)}%`;
   $('#trackDetail').textContent = `${trackedFrames.toLocaleString()} / ${scene.n_frames.toLocaleString()} 帧`;
@@ -1091,13 +1095,13 @@ function applyRealMetrics() {
   $('#trackQualityLabel').textContent = quality.label;
   $('#trackQualityBar').style.width = `${Math.round(trackRate * 100)}%`;
   $('#inRate').textContent = `${Math.round(inRate * 100)}%`;
-  $('#inRateDetail').textContent = `${valid.length} / ${scene.bounces.length} 次`;
+  $('#inRateDetail').textContent = `${valid.length} / ${decided} 次已判定`;
   $('#dominantZone').textContent = dominant;
   $('#dominantZoneDetail').textContent = `${dominantCount} 次落点`;
   $('#heatDominant').textContent = dominant;
   $('#heatInRate').textContent = `${Math.round(inRate * 100)}%`;
   $('#averageDepth').textContent = `${averageDepth.toFixed(1)} 米`;
-  $('#verdictText').textContent = `已自动识别为${playMode}。系统连续追踪到 ${trackedFrames.toLocaleString()} 帧球位置，并确认 ${scene.bounces.length} 次落地；界外落点已单独标红。`;
+  $('#verdictText').textContent = `已自动识别为${playMode}。系统连续追踪到 ${trackedFrames.toLocaleString()} 帧球位置，并确认 ${scene.bounces.length} 次落地；确定界外标红，压线或画质不足的落点进入复核。`;
   $('#insightText').textContent = `其中 ${anchored.toLocaleString()} 帧由可靠视觉观测锚定，${extrapolated.toLocaleString()} 帧由时序与物理约束补全；低可信位置不会伪装成确定结果。`;
 }
 
@@ -1119,18 +1123,20 @@ function buildEvents(filter = 'all') {
   if (!events.length) list.innerHTML = '<div class="plain-note"><span>i</span><p><strong>当前没有这类事件</strong>可以切换上方筛选查看其他事件。</p></div>';
   events.forEach((event) => {
     const button = document.createElement('button');
-    const isOut = event.rawZone === 'Out';
-    button.className = `event-item ${event.type}${isOut ? ' out' : ''}`;
+    const isOut = event.lineCall === 'out' || event.rawZone === 'Out';
+    const needsReview = event.lineCall === 'review';
+    button.className = `event-item ${event.type}${isOut ? ' out' : ''}${needsReview ? ' review' : ''}`;
     const player = event.playerId ? ` · 球员 ${event.playerId}` : '';
-    const symbol = event.type === 'net' ? '×' : event.type === 'bounce' ? (isOut ? '×' : '⌄') : '✦';
+    const symbol = event.type === 'net' ? '×' : event.type === 'bounce' ? (isOut ? '×' : needsReview ? '?' : '⌄') : '✦';
     const label = event.type === 'net' ? `第 ${event.number} 次下网` : event.type === 'bounce' ? `第 ${event.number} 次落地` : `第 ${event.number} 次击球`;
-    button.innerHTML = `<span class="event-symbol">${symbol}</span><span><strong>${label}</strong><small>${event.zone}${player}</small></span><time>${formatTime(event.time)}</time>`;
+    const verdict = needsReview ? '压线待复核' : event.zone;
+    button.innerHTML = `<span class="event-symbol">${symbol}</span><span><strong>${label}</strong><small>${verdict}${player}</small></span><time>${formatTime(event.time)}</time>`;
     button.addEventListener('click', () => seek(event));
     list.appendChild(button);
   });
   state.events.forEach((event) => {
     const marker = document.createElement('button');
-    marker.className = `event-marker ${event.type}${event.rawZone === 'Out' ? ' out' : ''}`;
+    marker.className = `event-marker ${event.type}${event.lineCall === 'out' || event.rawZone === 'Out' ? ' out' : ''}${event.lineCall === 'review' ? ' review' : ''}`;
     marker.style.left = `${Math.min(100, event.time / Math.max(state.duration, 1) * 100)}%`;
     marker.title = `${event.type === 'net' ? '下网' : event.type === 'bounce' ? event.zone : '击球'} · ${formatTime(event.time)}`;
     marker.setAttribute('aria-label', marker.title);
@@ -1164,6 +1170,12 @@ function drawRedCross(ctx, x, y, radius = 6) {
   ctx.moveTo(x - radius, y - radius); ctx.lineTo(x + radius, y + radius);
   ctx.moveTo(x + radius, y - radius); ctx.lineTo(x - radius, y + radius); ctx.stroke();
   ctx.restore();
+}
+
+function drawReviewRing(ctx, x, y, radius = 6) {
+  ctx.save(); ctx.strokeStyle = '#f3b941'; ctx.fillStyle = 'rgba(243,185,65,.16)';
+  ctx.lineWidth = 2; ctx.setLineDash([3, 2]); ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fill(); ctx.stroke(); ctx.setLineDash([]); ctx.restore();
 }
 
 function drawEventOverlay() {
@@ -1212,8 +1224,11 @@ function drawEventOverlay() {
     .forEach((bounce) => {
       const x = px(Math.max(0, Math.min(10.97, bounce.x)));
       const y = py(Math.max(0, Math.min(23.77, bounce.y)));
-      if (bounce.zone === 'Out') {
+      const lineCall = bounce.line_call || (bounce.zone === 'Out' ? 'out' : 'in');
+      if (lineCall === 'out') {
         drawRedCross(ctx, x, y, 5);
+      } else if (lineCall === 'review') {
+        drawReviewRing(ctx, x, y, 5);
       } else {
         ctx.fillStyle = state.scene.player_identities?.[bounce.player_id]?.color || '#d7ff78';
         ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 12;
@@ -1250,9 +1265,11 @@ function drawHeatmap() {
   (state.scene?.bounces || []).forEach((bounce, index) => {
     const x = pointX(Math.max(xMin, Math.min(xMax, bounce.x)));
     const y = pointY(Math.max(yMin, Math.min(yMax, bounce.y)));
-    if (bounce.zone === 'Out') {
+    const lineCall = bounce.line_call || (bounce.zone === 'Out' ? 'out' : 'in');
+    if (lineCall === 'out') {
       drawRedCross(ctx, x, y); return;
     }
+    if (lineCall === 'review') { drawReviewRing(ctx, x, y); return; }
     const playerColor = state.scene?.player_identities?.[bounce.player_id]?.color || '#d7ff78';
     const glow = ctx.createRadialGradient(x, y, 0, x, y, 19);
     glow.addColorStop(0, `${playerColor}ee`); glow.addColorStop(0.25, `${playerColor}78`); glow.addColorStop(1, `${playerColor}00`);

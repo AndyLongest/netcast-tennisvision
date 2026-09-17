@@ -439,47 +439,157 @@ def player_identity_at(
     return identity, (float(confidence) if confidence is not None else None)
 
 
+def _stable_rally_mapping(
+    frames_meta: list[dict[str, Any]],
+    start_frame: int,
+    end_frame: int,
+) -> tuple[dict[str, str], float, float]:
+    """Choose one A/B-to-side mapping for a whole rally.
+
+    A player cannot change ends during a rally.  Sparse ReID observations can, however,
+    briefly swap when a crop is blurred or occluded.  Following tracklet-level sports
+    ReID practice, aggregate the dense decisions over the complete rally and weight each
+    vote by its appearance margin.  The resulting mapping is frozen for every contact in
+    that rally; a different mapping may only be selected after the rally boundary.
+    """
+    if not frames_meta:
+        return {"near": "A", "far": "B"}, 0.0, 0.0
+    lo = max(0, int(start_frame))
+    hi = min(len(frames_meta) - 1, int(end_frame))
+    votes: dict[tuple[str | None, str | None], float] = defaultdict(float)
+    counts: dict[tuple[str | None, str | None], int] = defaultdict(int)
+    confidence_sums: dict[tuple[str | None, str | None], float] = defaultdict(float)
+    for frame_index in range(lo, hi + 1):
+        meta = frames_meta[frame_index]
+        mapping = meta.get("player_identity_by_side") or {}
+        key = (mapping.get("near"), mapping.get("far"))
+        if set(key) != {"A", "B"}:
+            continue
+        confidence = float(meta.get("player_identity_confidence") or 0.0)
+        # Every valid frame gets one vote; strong ReID evidence can add at most one more.
+        # This prevents a single overconfident crop from defeating temporal continuity.
+        votes[key] += 1.0 + min(max(confidence, 0.0), 1.0)
+        counts[key] += 1
+        confidence_sums[key] += confidence
+    if not votes:
+        middle = min(len(frames_meta) - 1, max(0, (lo + hi) // 2))
+        mapping = frames_meta[middle].get("player_identity_by_side") or {}
+        if set(mapping.values()) == {"A", "B"}:
+            return (
+                dict(mapping),
+                float(frames_meta[middle].get("player_identity_confidence") or 0.0),
+                1.0,
+            )
+        return {"near": "A", "far": "B"}, 0.0, 0.0
+    winner = max(votes, key=lambda key: (votes[key], counts[key]))
+    total = sum(votes.values())
+    consensus = votes[winner] / max(total, 1e-9)
+    appearance_confidence = confidence_sums[winner] / max(counts[winner], 1)
+    return (
+        {"near": winner[0], "far": winner[1]},
+        float(appearance_confidence),
+        float(consensus),
+    )
+
+
+def _bounce_side(bounce: dict[str, Any]) -> str | None:
+    side = bounce.get("court_side")
+    if side in {"near", "far"}:
+        return str(side)
+    world = bounce.get("world")
+    if world is None and bounce.get("y") is not None:
+        world = (bounce.get("x", COURT_WIDTH / 2), bounce["y"])
+    if world is None:
+        return None
+    return "near" if float(world[1]) < NET_Y else "far"
+
+
 def attribute_landings_to_hitters(
     events: list[dict[str, Any]],
     bounces: list[dict[str, Any]],
     frames_meta: list[dict[str, Any]],
 ) -> None:
-    """Make each landing inherit the identity of the preceding racket strike."""
+    """Attribute contacts with rally-stable identity and tennis-side corroboration.
+
+    The old path trusted the nearest projected racket in one hit frame.  A detection a
+    few frames early/late could therefore assign the shot, and every later landing, to
+    the wrong player.  Here appearance is stabilised over the whole rally, while the
+    touchdown half independently checks which side struck the ball.  Geometry never
+    changes the landing itself; it only repairs presentation metadata.
+    """
+    contacts_by_rally: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for event in events:
+        if event.get("kind") in {"hit", "bounce"} and event.get("rally_id") is not None:
+            contacts_by_rally[int(event["rally_id"])].append(event)
+    for bounce in bounces:
+        if bounce.get("rally_id") is not None:
+            contacts_by_rally[int(bounce["rally_id"])].append(bounce)
+
+    rally_mappings: dict[int, tuple[dict[str, str], float, float]] = {}
+    for rally_id, contacts in contacts_by_rally.items():
+        frames = [int(contact["frame"]) for contact in contacts if contact.get("frame") is not None]
+        if frames:
+            rally_mappings[rally_id] = _stable_rally_mapping(
+                frames_meta, min(frames), max(frames)
+            )
+
+    def mapping_at(rally_id: int, frame_index: int) -> tuple[dict[str, str], float, float]:
+        """Use rally consensus when available, otherwise the local dense ReID state."""
+        if rally_id in rally_mappings:
+            return rally_mappings[rally_id]
+        return _stable_rally_mapping(frames_meta, frame_index, frame_index)
+
     hits_by_rally: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for event in events:
         if event.get("kind") != "hit":
             continue
-        identity, confidence = player_identity_at(
-            frames_meta, int(event["frame"]), event.get("contact_side"),
-        )
+        rally_value = event.get("rally_id")
+        rally_id = int(rally_value) if rally_value is not None else -1
+        mapping, confidence, consensus = mapping_at(rally_id, int(event["frame"]))
+        side = event.get("contact_side")
+        identity = mapping.get(side) if side in {"near", "far"} else None
         event["player_id"] = identity
         event["identity_confidence"] = confidence
+        event["identity_rally_consensus"] = consensus
+        event["identity_source"] = "rally_tracklet_consensus"
         if event.get("rally_id") is not None:
-            hits_by_rally[int(event["rally_id"])].append(event)
+            hits_by_rally[rally_id].append(event)
     for bounce in bounces:
+        rally_value = bounce.get("rally_id")
+        rally_id = int(rally_value) if rally_value is not None else -1
+        mapping, confidence, consensus = mapping_at(rally_id, int(bounce["frame"]))
         preceding = [
-            hit for hit in hits_by_rally.get(int(bounce.get("rally_id", -1)), ())
+            hit for hit in hits_by_rally.get(rally_id, ())
             if int(hit["frame"]) < int(bounce["frame"])
         ]
         owner = max(preceding, key=lambda hit: int(hit["frame"])) if preceding else None
-        if owner:
-            bounce["player_id"] = owner.get("player_id")
-            bounce["identity_confidence"] = owner.get("identity_confidence")
-            bounce["identity_source"] = "preceding_hit"
-            continue
-        # A clipped point may begin after the strike. Tennis still makes the hitter's
-        # side knowable: a valid first landing on one half came from the opposite half.
-        world = bounce.get("world")
-        if world is None:
-            bounce["player_id"] = None
-            bounce["identity_confidence"] = None
-            bounce["identity_source"] = "unresolved"
-            continue
-        landing_side = "near" if float(world[1]) < NET_Y else "far"
-        hitter_side = "far" if landing_side == "near" else "near"
-        identity, confidence = player_identity_at(
-            frames_meta, int(bounce["frame"]), hitter_side,
+
+        landing_side = _bounce_side(bounce)
+        expected_hitter_side = (
+            "far" if landing_side == "near" else "near" if landing_side == "far" else None
         )
-        bounce["player_id"] = identity
-        bounce["identity_confidence"] = confidence
-        bounce["identity_source"] = "opposite_landing_half"
+        owner_side = owner.get("contact_side") if owner else None
+        # A confirmed first touchdown normally follows a strike from the opposite half.
+        # When the single-frame racket side disagrees, the landing half is the stronger
+        # court-level observation.  Keep the disagreement auditable instead of silently
+        # copying the wrong hit label into the minimap.
+        hitter_side = expected_hitter_side or owner_side
+        if hitter_side in {"near", "far"}:
+            identity = mapping.get(hitter_side)
+            bounce["player_id"] = identity
+            bounce["identity_confidence"] = confidence
+            bounce["identity_rally_consensus"] = consensus
+            bounce["identity_source"] = (
+                "rally_consensus+landing_half"
+                if owner else "clipped_rally+landing_half"
+            )
+            if owner is not None:
+                owner["player_id"] = identity
+                owner["identity_confidence"] = confidence
+                owner["identity_rally_consensus"] = consensus
+                owner["identity_source"] = "rally_consensus+following_landing"
+                owner["contact_side_corrected"] = owner_side != hitter_side
+            continue
+        bounce["player_id"] = owner.get("player_id") if owner else None
+        bounce["identity_confidence"] = owner.get("identity_confidence") if owner else None
+        bounce["identity_source"] = "preceding_hit_unresolved" if owner else "unresolved"

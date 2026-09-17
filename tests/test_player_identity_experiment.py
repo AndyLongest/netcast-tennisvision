@@ -120,7 +120,7 @@ def test_landing_colour_uses_temporally_stable_identity_after_false_swap():
     attribute_landings_to_hitters(events, bounces, frames)
 
     assert bounces[0]["player_id"] == "A"
-    assert bounces[0]["identity_source"] == "preceding_hit"
+    assert bounces[0]["identity_source"] == "rally_consensus+landing_half"
 
 
 def test_landing_inherits_the_previous_hitter_identity_within_its_rally():
@@ -142,4 +142,69 @@ def test_landing_inherits_the_previous_hitter_identity_within_its_rally():
     attribute_landings_to_hitters(events, bounces, frames)
     assert [bounce["player_id"] for bounce in bounces] == ["A", "B", "B"]
     assert bounces[0]["identity_confidence"] == 0.31
-    assert bounces[2]["identity_source"] == "opposite_landing_half"
+    assert bounces[0]["identity_rally_consensus"] == 1.0
+    assert bounces[2]["identity_source"] == "clipped_rally+landing_half"
+
+
+def test_landing_half_repairs_a_single_frame_wrong_hitter_side():
+    frames = [{"players_world": []} for _ in range(20)]
+    dense = make_dense_decisions({0: {
+        "mapping": {"near": "A", "far": "B"},
+        "pair_advantage": 0.4,
+    }}, len(frames))
+    attach_identity_to_frames(frames, IdentityResult(dense, {}))
+    events = [
+        # The single-frame racket test was wrong: a shot landing near was struck far.
+        {"kind": "hit", "frame": 5, "rally_id": 2, "contact_side": "near"},
+    ]
+    bounces = [
+        {"frame": 12, "rally_id": 2, "world": (4.0, 6.0), "court_side": "near"},
+    ]
+
+    attribute_landings_to_hitters(events, bounces, frames)
+
+    assert bounces[0]["player_id"] == "B"
+    assert bounces[0]["identity_source"] == "rally_consensus+landing_half"
+    assert events[0]["player_id"] == "B"
+    assert events[0]["contact_side_corrected"] is True
+
+
+def test_rally_consensus_prevents_mid_rally_identity_colour_swap():
+    frames = [{"players_world": []} for _ in range(30)]
+    decisions = {
+        0: {"mapping": {"near": "A", "far": "B"}, "pair_advantage": 0.3},
+        18: {"mapping": {"near": "B", "far": "A"}, "pair_advantage": 0.12},
+    }
+    attach_identity_to_frames(
+        frames,
+        IdentityResult(make_dense_decisions(decisions, len(frames)), {}),
+    )
+    events = [
+        {"kind": "hit", "frame": 3, "rally_id": 0, "contact_side": "far"},
+        {"kind": "hit", "frame": 22, "rally_id": 0, "contact_side": "near"},
+    ]
+    bounces = [
+        {"frame": 10, "rally_id": 0, "world": (5.0, 5.0), "court_side": "near"},
+        {"frame": 27, "rally_id": 0, "world": (5.0, 20.0), "court_side": "far"},
+    ]
+
+    attribute_landings_to_hitters(events, bounces, frames)
+
+    assert [bounce["player_id"] for bounce in bounces] == ["B", "A"]
+    assert all(bounce["identity_rally_consensus"] > 0.5 for bounce in bounces)
+
+
+def test_clipped_landing_uses_the_current_mapping_after_a_changeover():
+    frames = [{"players_world": []} for _ in range(20)]
+    dense = make_dense_decisions({0: {
+        "mapping": {"near": "B", "far": "A"},
+        "pair_advantage": 0.26,
+    }}, len(frames))
+    attach_identity_to_frames(frames, IdentityResult(dense, {}))
+    bounce = {"frame": 12, "world": (4.0, 6.0), "court_side": "near"}
+
+    attribute_landings_to_hitters([], [bounce], frames)
+
+    assert bounce["player_id"] == "A"
+    assert bounce["identity_confidence"] == 0.26
+    assert bounce["identity_source"] == "clipped_rally+landing_half"
