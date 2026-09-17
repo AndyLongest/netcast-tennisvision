@@ -512,6 +512,14 @@ class Handler(SimpleHTTPRequestHandler):
                         length = 0
                     if length:
                         payload = self.read_bounded_json(maximum=4096)
+                        if payload.get("source") == "external_rtmp":
+                            session = live_experiment_manager().start_external_stream(
+                                str(payload.get("stream_name", "")),
+                                fps_hint=float(payload.get("fps", 30.0)),
+                                source_name=Path(str(payload.get("filename", "camera"))).name,
+                            )
+                            self.send_json(session.snapshot(), HTTPStatus.ACCEPTED)
+                            return
                         if payload.get("source") == "uploaded":
                             candidates = sorted(DATA.glob("live_lab_source.*"))
                             if not candidates:
@@ -916,6 +924,7 @@ class Handler(SimpleHTTPRequestHandler):
                 {
                     "X-Filename": filename,
                     "X-Video-Fingerprint": video_fingerprint(clip),
+                    "X-Fps": f"{fps:.6f}",
                 },
             )
             snapshot["fps"] = round(fps, 3)

@@ -74,10 +74,12 @@ far-right, far-left order. Geometry validation runs before the paused job contin
 ### Internal live-lab endpoints
 
 - `POST /api/live-lab/start` starts the bundled Demo on a temporary L40S when the trusted
-  relay is in PPIO mode. Inside the isolated worker, `{source: uploaded}` starts the
-  previously transferred pseudo-camera source.
+  relay is in PPIO mode. Inside the isolated worker, `{source: external_rtmp}` arms a
+  subscriber for the trusted stream name; it never receives the source video.
 - `POST /api/live-lab/upload` accepts original video bytes and `X-Filename`, validates the
-  native frame rate, then asynchronously provisions L40S and returns a local session id.
+  native frame rate, keeps the file on the camera-simulator host, then asynchronously
+  provisions L40S and returns a local session id. Once the worker reports
+  `awaiting_stream`, local FFmpeg publishes the file at native speed to ZLMediaKit.
 - `GET /api/live-lab/status?session_id=...&after_event=N` returns measured ingest/analysis
   clocks, queue backlog, newly confirmed online events, the trusted per-session HTTP-fMP4
   playback URL and the final offline comparison.

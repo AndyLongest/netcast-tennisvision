@@ -13,6 +13,8 @@ import http.client
 import json
 import os
 import re
+import shutil
+import subprocess
 import threading
 import time
 import urllib.error
@@ -51,7 +53,7 @@ class PPIOJobManager:
         self.shared_secret = os.environ.get("TENNISVISION_CLOUD_TOKEN", "").strip()
         self.image = os.environ.get(
             "TENNISVISION_PPIO_IMAGE",
-            "image.ppinfra.com/prod-ahskpcitxxwcgdnfqfpu/netcast-tennisvision:production-v12",
+            "image.ppinfra.com/prod-ahskpcitxxwcgdnfqfpu/netcast-tennisvision:production-v13",
         ).strip()
         self.product_id = os.environ.get("TENNISVISION_PPIO_PRODUCT_ID", "L40S.22c125g")
         self.cluster_id = os.environ.get("TENNISVISION_PPIO_CLUSTER_ID", "cn-south-1")
@@ -788,6 +790,7 @@ class PPIOLiveJobManager(PPIOJobManager):
         self._stop_event = threading.Event()
         self._local_session_id = ""
         self._remote_session_id = ""
+        self._producer: subprocess.Popen[bytes] | None = None
 
     def _instance_envs(self) -> list[dict[str, str]]:
         """Pass the external media relay to the isolated live worker.
@@ -888,7 +891,7 @@ class PPIOLiveJobManager(PPIOJobManager):
                 {
                     "session_id": local_session_id,
                     "state": "preparing",
-                    "stage": "L40S 已就绪，正在传送实验素材",
+                    "stage": "L40S 已就绪，正在加载在线模型",
                     "source_time": 0.0,
                     "analysis_time": 0.0,
                     "events": [],
@@ -897,8 +900,19 @@ class PPIOLiveJobManager(PPIOJobManager):
                     "filename": upload_headers.get("X-Filename", clip.name),
                 },
             )
-            self._upload_video(remote_url, clip, upload_headers, purpose="live-lab")
-            start_body = json.dumps({"source": "uploaded"}).encode("utf-8")
+            stream_name = f"netcast-{local_session_id[:12]}"
+            try:
+                fps = float(upload_headers.get("X-Fps", "30"))
+            except ValueError:
+                fps = 30.0
+            start_body = json.dumps(
+                {
+                    "source": "external_rtmp",
+                    "stream_name": stream_name,
+                    "fps": fps,
+                    "filename": upload_headers.get("X-Filename", clip.name),
+                }
+            ).encode("utf-8")
             status, started = self._remote_request(
                 remote_url,
                 "POST",
@@ -917,6 +931,33 @@ class PPIOLiveJobManager(PPIOJobManager):
             with self._lock:
                 self._remote_session_id = remote_session_id
 
+            # The inference server is a pure ZLM subscriber.  Start the camera
+            # simulator only after the remote models are ready, exactly as a venue
+            # camera would publish independently of the GPU worker.
+            readiness_deadline = time.monotonic() + 180.0
+            while time.monotonic() < readiness_deadline and not self._stop_event.is_set():
+                status, payload = self._remote_request(
+                    remote_url,
+                    "GET",
+                    f"/api/live-lab/status?session_id={remote_session_id}&after_event=0",
+                )
+                if status >= 300:
+                    raise CloudLifecycleError(str(payload.get("error", "无法读取云端实时状态")))
+                payload["remote_session_id"] = remote_session_id
+                payload["session_id"] = local_session_id
+                payload["execution_target"] = "cloud-live-l40s"
+                payload["filename"] = upload_headers.get("X-Filename", clip.name)
+                self._write_json(self.status_path, payload)
+                if str(payload.get("state", "")) == "awaiting_stream":
+                    break
+                if str(payload.get("state", "")) in {"error", "stopped"}:
+                    raise CloudLifecycleError(str(payload.get("error", "在线模型未能就绪")))
+                time.sleep(0.2)
+            else:
+                raise CloudLifecycleError("L40S 在线模型准备超时")
+
+            self._producer = self._start_camera_simulator(clip, stream_name, fps)
+
             while not self._stop_event.is_set():
                 status, payload = self._remote_request(
                     remote_url,
@@ -932,6 +973,16 @@ class PPIOLiveJobManager(PPIOJobManager):
                 self._write_json(self.status_path, payload)
                 if str(payload.get("state", "")) in {"complete", "error", "stopped"}:
                     break
+                if self._producer.poll() is not None and str(payload.get("state", "")) != "complete":
+                    # A normal zero exit means the finite camera simulation reached
+                    # EOF; give the remote puller time to drain and close naturally.
+                    if self._producer.returncode not in {0, None}:
+                        detail = (
+                            self._producer.stderr.read() if self._producer.stderr else b""
+                        ).decode("utf-8", errors="replace")
+                        raise CloudLifecycleError(
+                            f"摄像头模拟推流中断：{detail.strip() or self._producer.returncode}"
+                        )
                 time.sleep(0.12)
             if self._stop_event.is_set():
                 self._stop_remote_live(remote_url, remote_session_id)
@@ -952,6 +1003,13 @@ class PPIOLiveJobManager(PPIOJobManager):
                 },
             )
         finally:
+            if self._producer is not None and self._producer.poll() is None:
+                self._producer.terminate()
+                try:
+                    self._producer.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self._producer.kill()
+            self._producer = None
             if self._stop_event.is_set() and remote_url and remote_session_id:
                 self._stop_remote_live(remote_url, remote_session_id)
             released = self._release_instance(instance_id) if instance_id else True
@@ -961,6 +1019,34 @@ class PPIOLiveJobManager(PPIOJobManager):
                 self._remote_session_id = ""
             if released:
                 self.runtime_path.unlink(missing_ok=True)
+
+    def _start_camera_simulator(
+        self, clip: Path, stream_name: str, fps: float
+    ) -> subprocess.Popen[bytes]:
+        executable = shutil.which("ffmpeg")
+        if not executable:
+            packages = Path.home() / "AppData" / "Local" / "Microsoft" / "WinGet" / "Packages"
+            candidates = sorted(
+                packages.glob("Gyan.FFmpeg.Shared_*/ffmpeg-*/bin/ffmpeg.exe"), reverse=True
+            )
+            executable = str(candidates[0]) if candidates else ""
+        if not executable:
+            raise CloudLifecycleError("本机没有 FFmpeg，无法模拟摄像头推流")
+        config = self._read_json(self.root / "data" / "live_lab_config.json")
+        host = os.environ.get("TENNISVISION_ZLM_HOST", "").strip() or str(
+            config.get("zlm_host", "")
+        ).strip()
+        if not host:
+            raise CloudLifecycleError("尚未配置 ZLMediaKit 地址")
+        stream_url = f"rtmp://{host}:1935/live/{stream_name}"
+        command = [
+            executable,
+            "-hide_banner", "-loglevel", "error", "-re", "-i", str(clip),
+            "-map", "0:v:0", "-an", "-c:v", "libx264", "-preset", "ultrafast",
+            "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-g", str(max(1, round(fps))),
+            "-bf", "0", "-f", "flv", stream_url,
+        ]
+        return subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
     def _write_status(self, state: str, progress: int, stage: str) -> None:
         """Keep the browser session addressable during chunked cloud uploads."""

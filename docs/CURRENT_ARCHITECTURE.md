@@ -239,7 +239,7 @@ Production cloud releases use `Dockerfile.release`: a thin code overlay on the a
 `production-v1` ML runtime. The legacy image stores frozen weights in
 `/opt/netcast/models`; the release maps that directory to the canonical `/app/models`
 path and refuses to publish unless the ball, bounce, player-segmentation and
-player-identity checkpoints are all present. The relay currently pins `production-v12`. Short PPIO control-plane TLS
+player-identity checkpoints are all present. The relay currently pins `production-v13`. Short PPIO control-plane TLS
 disconnects while an existing instance starts are retried until the startup deadline;
 instance creation itself is never blindly retried because that could allocate two GPUs.
 
@@ -249,7 +249,10 @@ stream, and only confirmed events return to the browser. On L40S, the accepted
 `production-v11` worker preserves every native ball frame, batches sixteen unchanged
 RacketVision inputs per CUDA call, and runs player segmentation every fourth frame while
 causally holding the last real player boxes between samples. It queues decoded ndarrays
-directly and JPEG-encodes only the throttled browser preview. The 1,737-frame demo held a
+directly in a 0.75-second bounded queue and JPEG-encodes only the throttled browser preview.
+When inference falls behind, the oldest unprocessed image is discarded and represented as
+an empty observation on the original source timeline; memory and wall-clock latency cannot
+grow without bound during a 10–30 minute stream. The 1,737-frame demo held a
 stable 0.3–0.5 second queue after warm-up and completed in 59.409 seconds for 58.067 seconds
 of source; the prior every-frame person/four-frame-batch worker required 102.446 seconds.
 `TENNISVISION_LIVE_BATCH_SIZE` and `TENNISVISION_LIVE_PERSON_STRIDE` are bounded rollback
@@ -257,12 +260,12 @@ controls. These settings apply only to the causal live worker; the offline produ
 report continues to use its documented full-frame person path.
 
 The live-lab browser may upload a different test clip to the trusted local relay. The
-relay creates one temporary L40S, transfers the clip in checksummed chunks with purpose
-`live-lab`, and the worker stores it only as a pseudo-camera source instead of starting
-the offline notebook. The worker then publishes that source at its native rate through
-the same RTMP/ZLMediaKit path. Status and events are mirrored back under a local session
-id; completion, failure and explicit stop all release the instance. This file-upload step
-is test harness setup and is not counted as camera-stream backlog.
+file stays on that camera-simulator host and is never uploaded to the inference worker.
+After a temporary L40S loads its frozen models and reports `awaiting_stream`, local
+FFmpeg publishes the clip at native speed to ZLMediaKit. The L40S receives only the
+unique stream name and pulls the same RTMP feed a production camera would expose.
+Status and events are mirrored back under a local session id; completion, failure and
+explicit stop terminate the local producer and release the instance.
 
 Rendering first performs a one-frame NVENC preflight. A usable NVIDIA encoder receives the
 unchanged rendered frames with the `p4`/CQ20 quality profile; otherwise an on-demand cloud

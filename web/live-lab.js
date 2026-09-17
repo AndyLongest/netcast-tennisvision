@@ -184,7 +184,7 @@ async function pollLiveExperiment() {
     }
     if (!response.ok) throw new Error(payload.error || '实时状态读取失败');
     state.missingPolls = 0;
-    const running = ['queued', 'preparing', 'connecting', 'running'].includes(payload.state);
+    const running = ['queued', 'preparing', 'awaiting_stream', 'connecting', 'running'].includes(payload.state);
     setRunning(running, payload.stage || (running ? '直播中' : '已完成'));
     byId('sourceClock').textContent = formatClock(payload.source_time);
     byId('videoHudClock').textContent = formatClock(payload.analysis_time);

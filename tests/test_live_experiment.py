@@ -74,6 +74,36 @@ def test_live_manager_accepts_an_explicit_uploaded_source(tmp_path, monkeypatch)
     assert started == [source]
 
 
+def test_live_manager_accepts_an_external_camera_stream(monkeypatch) -> None:
+    started = []
+
+    class FakeSession:
+        def __init__(self, source, **options) -> None:
+            self.source = source
+            self.options = options
+            self.id = "external"
+
+        def start(self) -> None:
+            started.append(self)
+
+        def snapshot(self) -> dict[str, str]:
+            return {"state": "awaiting_stream"}
+
+    monkeypatch.setattr(
+        "netcast_tennisvision.streaming.live_experiment.LiveExperimentSession", FakeSession
+    )
+    manager = LiveExperimentManager()
+
+    session = manager.start_external_stream(
+        "netcast-camera01", fps_hint=30.0, source_name="court.mp4"
+    )
+
+    assert session.source is None
+    assert session.options["external_stream_name"] == "netcast-camera01"
+    assert session.options["source_name"] == "court.mp4"
+    assert started == [session]
+
+
 def test_live_comparison_requires_time_and_position_agreement() -> None:
     reference = [
         {"frame": 100, "x": 4.0, "y": 6.0},
