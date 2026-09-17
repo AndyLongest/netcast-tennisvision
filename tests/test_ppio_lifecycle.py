@@ -194,11 +194,16 @@ def test_live_worker_receives_media_relay_from_runtime_config(tmp_path, monkeypa
     monkeypatch.delenv("TENNISVISION_ZLM_HOST", raising=False)
     config = tmp_path / "data" / "live_lab_config.json"
     config.parent.mkdir(parents=True)
-    config.write_text('{"zlm_host":"relay.example"}', encoding="utf-8")
+    config.write_text(
+        '{"zlm_host":"relay.example",'
+        '"zlm_webrtc_origin":"https://media.example"}',
+        encoding="utf-8",
+    )
 
     lifecycle = PPIOLiveJobManager(tmp_path)
 
     assert {item["key"]: item["value"] for item in lifecycle._instance_envs()} == {
         "TENNISVISION_CLOUD_SHARED_SECRET": "relay-secret",
         "TENNISVISION_ZLM_HOST": "relay.example",
+        "TENNISVISION_ZLM_WEBRTC_ORIGIN": "https://media.example",
     }

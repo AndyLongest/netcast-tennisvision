@@ -796,12 +796,19 @@ class PPIOLiveJobManager(PPIOJobManager):
         environment while provider credentials remain local.
         """
         envs = super()._instance_envs()
+        config = self._read_json(self.root / "data" / "live_lab_config.json")
         host = os.environ.get("TENNISVISION_ZLM_HOST", "").strip()
         if not host:
-            config = self._read_json(self.root / "data" / "live_lab_config.json")
             host = str(config.get("zlm_host", "")).strip()
         if host:
             envs.append({"key": "TENNISVISION_ZLM_HOST", "value": host})
+        playback_origin = os.environ.get("TENNISVISION_ZLM_WEBRTC_ORIGIN", "").strip()
+        if not playback_origin:
+            playback_origin = str(config.get("zlm_webrtc_origin", "")).strip()
+        if playback_origin:
+            envs.append(
+                {"key": "TENNISVISION_ZLM_WEBRTC_ORIGIN", "value": playback_origin}
+            )
         return envs
 
     def start_live(self, clip: Path, upload_headers: dict[str, str]) -> dict[str, Any]:
