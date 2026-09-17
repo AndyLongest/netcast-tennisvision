@@ -44,9 +44,10 @@ def test_live_lab_exposes_real_chain_and_separate_offline_baseline() -> None:
     assert "<span>远端</span><span>近端</span>" in page
     assert "球员 A" in page
     assert "球员 B" in page
-    assert "待复核" in page
+    assert "待复核" not in page
     assert "line_call" in script
-    assert "压线待复核" in script
+    assert "review-ball" not in page
+    assert "ctx.setLineDash([3, 2])" not in script
     assert "courtWidth = 10.97, courtLength = 23.77" in script
     assert "courtW = courtH * (courtWidth / courtLength)" in script
     assert "marginY + (courtLength - metres) / courtLength * courtH" in script

@@ -1125,18 +1125,18 @@ function buildEvents(filter = 'all') {
     const button = document.createElement('button');
     const isOut = event.lineCall === 'out' || event.rawZone === 'Out';
     const needsReview = event.lineCall === 'review';
-    button.className = `event-item ${event.type}${isOut ? ' out' : ''}${needsReview ? ' review' : ''}`;
+    button.className = `event-item ${event.type}${isOut ? ' out' : ''}`;
     const player = event.playerId ? ` · 球员 ${event.playerId}` : '';
-    const symbol = event.type === 'net' ? '×' : event.type === 'bounce' ? (isOut ? '×' : needsReview ? '?' : '⌄') : '✦';
+    const symbol = event.type === 'net' ? '×' : event.type === 'bounce' ? (isOut ? '×' : '⌄') : '✦';
     const label = event.type === 'net' ? `第 ${event.number} 次下网` : event.type === 'bounce' ? `第 ${event.number} 次落地` : `第 ${event.number} 次击球`;
-    const verdict = needsReview ? '压线待复核' : event.zone;
+    const verdict = needsReview ? `${event.zone} · 界线待复核` : event.zone;
     button.innerHTML = `<span class="event-symbol">${symbol}</span><span><strong>${label}</strong><small>${verdict}${player}</small></span><time>${formatTime(event.time)}</time>`;
     button.addEventListener('click', () => seek(event));
     list.appendChild(button);
   });
   state.events.forEach((event) => {
     const marker = document.createElement('button');
-    marker.className = `event-marker ${event.type}${event.lineCall === 'out' || event.rawZone === 'Out' ? ' out' : ''}${event.lineCall === 'review' ? ' review' : ''}`;
+    marker.className = `event-marker ${event.type}${event.lineCall === 'out' || event.rawZone === 'Out' ? ' out' : ''}`;
     marker.style.left = `${Math.min(100, event.time / Math.max(state.duration, 1) * 100)}%`;
     marker.title = `${event.type === 'net' ? '下网' : event.type === 'bounce' ? event.zone : '击球'} · ${formatTime(event.time)}`;
     marker.setAttribute('aria-label', marker.title);
@@ -1170,12 +1170,6 @@ function drawRedCross(ctx, x, y, radius = 6) {
   ctx.moveTo(x - radius, y - radius); ctx.lineTo(x + radius, y + radius);
   ctx.moveTo(x + radius, y - radius); ctx.lineTo(x - radius, y + radius); ctx.stroke();
   ctx.restore();
-}
-
-function drawReviewRing(ctx, x, y, radius = 6) {
-  ctx.save(); ctx.strokeStyle = '#f3b941'; ctx.fillStyle = 'rgba(243,185,65,.16)';
-  ctx.lineWidth = 2; ctx.setLineDash([3, 2]); ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2);
-  ctx.fill(); ctx.stroke(); ctx.setLineDash([]); ctx.restore();
 }
 
 function drawEventOverlay() {
@@ -1233,8 +1227,6 @@ function drawEventOverlay() {
       const lineCall = bounce.line_call || (bounce.zone === 'Out' ? 'out' : 'in');
       if (lineCall === 'out') {
         drawRedCross(ctx, x, y, 5);
-      } else if (lineCall === 'review') {
-        drawReviewRing(ctx, x, y, 5);
       } else {
         ctx.fillStyle = state.scene.player_identities?.[bounce.player_id]?.color || '#d7ff78';
         ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 12;
@@ -1275,7 +1267,6 @@ function drawHeatmap() {
     if (lineCall === 'out') {
       drawRedCross(ctx, x, y); return;
     }
-    if (lineCall === 'review') { drawReviewRing(ctx, x, y); return; }
     const playerColor = state.scene?.player_identities?.[bounce.player_id]?.color || '#d7ff78';
     const glow = ctx.createRadialGradient(x, y, 0, x, y, 19);
     glow.addColorStop(0, `${playerColor}ee`); glow.addColorStop(0.25, `${playerColor}78`); glow.addColorStop(1, `${playerColor}00`);

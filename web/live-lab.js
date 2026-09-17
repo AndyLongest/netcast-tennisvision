@@ -461,13 +461,9 @@ function drawCourt() {
     const py = event.net_hit ? y(11.885) : y(Number.isFinite(Number(event.y)) ? Number(event.y) : 11.885);
     const lineCall = event.line_call || (event.zone === 'Out' ? 'out' : 'in');
     const out = lineCall === 'out' || event.outcome === 'out' || event.net_hit;
-    const review = lineCall === 'review';
     if (out) {
       ctx.strokeStyle = '#ff5b6e'; ctx.lineWidth = 3; ctx.beginPath();
       ctx.moveTo(px - 7, py - 7); ctx.lineTo(px + 7, py + 7); ctx.moveTo(px + 7, py - 7); ctx.lineTo(px - 7, py + 7); ctx.stroke();
-    } else if (review) {
-      ctx.strokeStyle = '#f3b941'; ctx.fillStyle = 'rgba(243,185,65,.16)'; ctx.lineWidth = 2;
-      ctx.setLineDash([3, 2]); ctx.beginPath(); ctx.arc(px, py, 7, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
     } else {
       const color = event.player_id === 'A' ? '#b542f6' : event.player_id === 'B' ? '#2dd4bf' : '#c4f12c';
       ctx.shadowColor = color; ctx.shadowBlur = 14; ctx.fillStyle = color;
@@ -482,10 +478,9 @@ function deliverEvent(event, latencyMs, measured) {
   state.delivered.push(event);
   const lineCall = event.line_call || (event.zone === 'Out' ? 'out' : 'in');
   const out = lineCall === 'out' || event.outcome === 'out' || event.net_hit;
-  const review = lineCall === 'review';
   const player = event.player_id === 'A' ? '球员 A' : event.player_id === 'B' ? '球员 B' : '未分配球员';
-  const label = out ? (event.net_hit ? '下网' : '界外') : review ? '压线待复核' : `${player} 落点`;
-  const color = review ? '#f3b941' : event.player_id === 'A' ? '#b542f6' : event.player_id === 'B' ? '#2dd4bf' : '#c4f12c';
+  const label = out ? (event.net_hit ? '下网' : '界外') : `${player} 落点`;
+  const color = event.player_id === 'A' ? '#b542f6' : event.player_id === 'B' ? '#2dd4bf' : '#c4f12c';
   byId('landingCount').textContent = String(state.delivered.length);
   const currentRallyCount = state.delivered.filter((item) => item.rally_id === state.activeRally).length;
   byId('landingDetail').textContent = `当前回合 ${currentRallyCount} 个`;
