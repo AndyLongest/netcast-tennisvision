@@ -148,17 +148,32 @@ def dominant_player_color(crop: np.ndarray) -> np.ndarray | None:
     if height < 20 or width < 8:
         return None
     torso = crop[
-        max(0, round(height * 0.18)):max(1, round(height * 0.62)),
-        max(0, round(width * 0.20)):max(1, round(width * 0.80)),
+        max(0, round(height * 0.20)):max(1, round(height * 0.56)),
+        max(0, round(width * 0.28)):max(1, round(width * 0.72)),
     ]
     if torso.size == 0:
         return None
-    pixels = torso.reshape(-1, 3)[:: max(1, torso.size // 9000)]
+    torso_pixels = torso.reshape(-1, 3)
+    pixels = torso_pixels[::max(1, len(torso_pixels) // 1200)]
     hsv = cv2.cvtColor(pixels.reshape(-1, 1, 3), cv2.COLOR_BGR2HSV).reshape(-1, 3)
     visible = (hsv[:, 2] >= 18) & (hsv[:, 2] <= 250)
-    colourful = visible & (hsv[:, 1] >= 45)
-    mask = colourful if int(colourful.sum()) >= max(18, round(visible.sum() * 0.14)) else visible
-    selected = pixels[mask]
+    edge = max(1, min(height, width) // 12)
+    border = np.concatenate((
+        crop[:edge].reshape(-1, 3), crop[-edge:].reshape(-1, 3),
+        crop[:, :edge].reshape(-1, 3), crop[:, -edge:].reshape(-1, 3),
+    ))[::max(1, (2 * edge * (height + width)) // 64)]
+    pixel_lab = cv2.cvtColor(
+        pixels.astype(np.uint8).reshape(-1, 1, 3), cv2.COLOR_BGR2LAB,
+    ).reshape(-1, 3).astype(np.float32)
+    border_lab = cv2.cvtColor(
+        border.astype(np.uint8).reshape(-1, 1, 3), cv2.COLOR_BGR2LAB,
+    ).reshape(-1, 3).astype(np.float32)
+    background_distance = np.min(
+        np.linalg.norm(pixel_lab[:, None, :] - border_lab[None, :, :], axis=2), axis=1,
+    )
+    foreground = visible & (background_distance >= 16.0)
+    base = foreground if int(foreground.sum()) >= max(12, round(visible.sum() * 0.10)) else visible
+    selected = pixels[base]
     if len(selected) < 8:
         return None
     buckets = (selected.astype(np.int32) // 32).clip(0, 7)
