@@ -207,6 +207,7 @@ class LiveExperimentSession:
             "detector_frames": 0,
             "events": [],
             "execution": "真实 RTMP / ZLMediaKit / 在线推理",
+            "source_name": self.source.name,
         }
 
     def start(self) -> None:
@@ -551,12 +552,16 @@ class LiveExperimentSession:
                 self._update(state="stopped", stage="实验已停止")
             else:
                 elapsed = time.time() - producer_started
-                reference_payload = json.loads(
-                    (ROOT / "assets" / "demo" / "scene3d.json").read_text(encoding="utf-8")
-                )
-                comparison = compare_landing_events(
-                    self._events, list(reference_payload.get("bounces", [])), fps=fps
-                )
+                comparison = None
+                if self.source.resolve() == DEMO_VIDEO.resolve():
+                    reference_payload = json.loads(
+                        (ROOT / "assets" / "demo" / "scene3d.json").read_text(
+                            encoding="utf-8"
+                        )
+                    )
+                    comparison = compare_landing_events(
+                        self._events, list(reference_payload.get("bounces", [])), fps=fps
+                    )
                 final = {
                     "state": "complete", "stage": "真实端到端实验完成",
                     "source_time": ingested_frames / fps,
@@ -598,12 +603,17 @@ class LiveExperimentManager:
         self._session: LiveExperimentSession | None = None
 
     def start_demo(self) -> LiveExperimentSession:
+        return self.start_source(DEMO_VIDEO)
+
+    def start_source(self, source: Path) -> LiveExperimentSession:
         with self._lock:
             if self._session is not None and self._session.snapshot().get("state") in {
                 "preparing", "connecting", "running",
             }:
                 return self._session
-            self._session = LiveExperimentSession()
+            if not source.is_file():
+                raise RuntimeError("实时实验素材不存在")
+            self._session = LiveExperimentSession(source)
             self._session.start()
             return self._session
 

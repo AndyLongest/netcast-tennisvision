@@ -19,7 +19,7 @@ def test_live_manager_reuses_only_an_active_session(monkeypatch) -> None:
     started = []
 
     class FakeSession:
-        def __init__(self) -> None:
+        def __init__(self, _source=None) -> None:
             self.id = str(len(started))
             self.state = "preparing"
 
@@ -45,6 +45,33 @@ def test_live_manager_rejects_unknown_session() -> None:
     manager = LiveExperimentManager()
     assert manager.get("missing") is None
     assert manager.stop("missing") is False
+
+
+def test_live_manager_accepts_an_explicit_uploaded_source(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "uploaded.mp4"
+    source.write_bytes(b"video")
+    started = []
+
+    class FakeSession:
+        def __init__(self, selected_source) -> None:
+            self.id = "uploaded"
+            self.source = selected_source
+
+        def start(self) -> None:
+            started.append(self.source)
+
+        def snapshot(self) -> dict[str, str]:
+            return {"state": "running"}
+
+    monkeypatch.setattr(
+        "netcast_tennisvision.streaming.live_experiment.LiveExperimentSession", FakeSession
+    )
+    manager = LiveExperimentManager()
+
+    session = manager.start_source(source)
+
+    assert session.source == source
+    assert started == [source]
 
 
 def test_live_comparison_requires_time_and_position_agreement() -> None:

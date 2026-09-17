@@ -23,9 +23,11 @@ def test_live_lab_exposes_real_chain_and_separate_offline_baseline() -> None:
     assert "真实链路实验" in page
     assert "开始真实端到端实验" in page
     assert "查看离线基准回放" in page
+    assert "上传其他视频" in page
     assert "RTMP / ZLMediaKit" in page
     assert "/api/live-lab/start" in script
     assert "/api/live-lab/status" in script
+    assert "/api/live-lab/upload" in script
     assert "/api/live-lab/frame" not in script
     assert "ZLMRTCClient.js" not in page
     assert "payload.fmp4_playback_url" in script

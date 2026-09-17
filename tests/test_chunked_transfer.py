@@ -13,6 +13,7 @@ def start_upload_server(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "CLOUD_SHARED_SECRET", "")
     monkeypatch.setattr(server, "CLOUD_API_URL", "")
     monkeypatch.setattr(server, "cloud_manager", None)
+    monkeypatch.setattr(server, "cloud_live_manager", None)
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
@@ -94,8 +95,11 @@ def test_lifecycle_sends_multiple_independent_parts(tmp_path, monkeypatch):
     clip.write_bytes(b"a" * 19)
     calls = []
 
-    def remote_request(_url, _method, path, **_kwargs):
+    initialized_payload = {}
+
+    def remote_request(_url, _method, path, **kwargs):
         if path == "/api/upload/init":
+            initialized_payload.update(json.loads(kwargs["body"]))
             return 201, {"upload_id": "a" * 32, "chunk_size": 8}
         assert path == "/api/upload/complete"
         return 202, {"accepted": True}
@@ -107,11 +111,66 @@ def test_lifecycle_sends_multiple_independent_parts(tmp_path, monkeypatch):
         lambda _url, upload_id, index, body: calls.append((upload_id, index, body)),
     )
 
-    lifecycle._upload_video("https://cloud.example", clip, {"X-Filename": "clip.mp4"})
+    completed = lifecycle._upload_video(
+        "https://cloud.example",
+        clip,
+        {"X-Filename": "clip.mp4"},
+        purpose="live-lab",
+    )
 
     calls.sort(key=lambda item: item[1])
     assert [len(body) for _, _, body in calls] == [8, 8, 3]
     assert [index for _, index, _ in calls] == [0, 1, 2]
+    assert initialized_payload["purpose"] == "live-lab"
+    assert completed == {"accepted": True}
+
+
+def test_live_lab_chunk_completion_stores_source_without_starting_offline_job(
+    tmp_path, monkeypatch
+):
+    httpd, thread = start_upload_server(tmp_path, monkeypatch)
+    monkeypatch.setattr(server, "DATA", tmp_path / "data")
+    connection = http.client.HTTPConnection(*httpd.server_address, timeout=5)
+    try:
+        status, initialized = request_json(
+            connection,
+            "POST",
+            "/api/upload/init",
+            {"filename": "practice.mp4", "total_size": 5, "purpose": "live-lab"},
+        )
+        assert status == 201
+        upload_id = initialized["upload_id"]
+        chunk = b"video"
+        connection.request(
+            "PUT",
+            f"/api/upload/chunk/{upload_id}/0",
+            body=chunk,
+            headers={
+                "Content-Length": str(len(chunk)),
+                "X-Chunk-SHA256": hashlib.sha256(chunk).hexdigest(),
+            },
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        response.read()
+        monkeypatch.setattr(
+            server.Handler,
+            "start_assembled_upload",
+            lambda *_args: (_ for _ in ()).throw(AssertionError("offline path called")),
+        )
+
+        status, completed = request_json(
+            connection, "POST", "/api/upload/complete", {"upload_id": upload_id}
+        )
+
+        assert status == 201
+        assert completed["source"] == "uploaded"
+        assert (server.DATA / "live_lab_source.mp4").read_bytes() == chunk
+    finally:
+        connection.close()
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=2)
 
 
 def test_ranged_video_download_reassembles_all_parts(tmp_path, monkeypatch):

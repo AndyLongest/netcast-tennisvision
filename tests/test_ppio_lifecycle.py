@@ -3,7 +3,11 @@ from pathlib import Path
 
 import pytest
 
-from netcast_tennisvision.cloud.ppio_lifecycle import CloudLifecycleError, PPIOJobManager
+from netcast_tennisvision.cloud.ppio_lifecycle import (
+    CloudLifecycleError,
+    PPIOJobManager,
+    PPIOLiveJobManager,
+)
 
 
 def manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PPIOJobManager:
@@ -164,3 +168,21 @@ def test_cloud_status_write_retries_a_transient_windows_reader_lock(tmp_path, mo
 
     assert attempts == 3
     assert PPIOJobManager._read_json(destination) == {"state": "running"}
+
+
+def test_live_manager_returns_only_new_events_for_local_session(tmp_path, monkeypatch):
+    monkeypatch.setenv("PPIO_API_KEY", "provider-secret")
+    monkeypatch.setenv("TENNISVISION_CLOUD_TOKEN", "relay-secret")
+    lifecycle = PPIOLiveJobManager(tmp_path)
+    lifecycle._write_json(
+        lifecycle.status_path,
+        {
+            "session_id": "local-live",
+            "state": "running",
+            "events": [{"id": 0}, {"id": 1}],
+            "event_cursor": 2,
+        },
+    )
+
+    assert lifecycle.snapshot("missing") is None
+    assert lifecycle.snapshot("local-live", after_event=1)["events"] == [{"id": 1}]

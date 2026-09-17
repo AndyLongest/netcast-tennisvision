@@ -47,11 +47,13 @@ overwrites the active clip.
 ### Chunked cloud transport
 
 - `POST /api/upload/init` accepts filename, total size, video fingerprint and display
-  correction metadata. It returns an opaque upload ID, part size and part count.
+  correction metadata. Internal live-lab transfer additionally sets `purpose=live-lab`.
+  It returns an opaque upload ID, part size and part count.
 - `PUT /api/upload/chunk/{upload_id}/{index}` accepts one exact-size part and requires
   `X-Chunk-SHA256`.
 - `POST /api/upload/complete` verifies that all parts exist with the expected total size,
-  assembles them atomically and starts analysis.
+  assembles them atomically and starts analysis. For `purpose=live-lab`, it stores the
+  source for the causal live worker and does not start the offline notebook.
 
 These endpoints are relay-facing transport APIs. Browser uploads continue to use the
 stable `POST /api/analyze` contract against the trusted local service.
@@ -71,7 +73,11 @@ far-right, far-left order. Geometry validation runs before the paused job contin
 
 ### Internal live-lab endpoints
 
-- `POST /api/live-lab/start` starts or reattaches to the single bundled-Demo experiment.
+- `POST /api/live-lab/start` starts the bundled Demo on a temporary L40S when the trusted
+  relay is in PPIO mode. Inside the isolated worker, `{source: uploaded}` starts the
+  previously transferred pseudo-camera source.
+- `POST /api/live-lab/upload` accepts original video bytes and `X-Filename`, validates the
+  native frame rate, then asynchronously provisions L40S and returns a local session id.
 - `GET /api/live-lab/status?session_id=...&after_event=N` returns measured ingest/analysis
   clocks, queue backlog, newly confirmed online events, the trusted per-session HTTP-fMP4
   playback URL and the final offline comparison.
@@ -79,6 +85,10 @@ far-right, far-left order. Geometry validation runs before the paused job contin
   stream, not the source file. It is a diagnostics endpoint; the normal left-hand preview
   plays the ZLMediaKit HTTP-fMP4 stream directly and does not poll this endpoint.
 - `POST /api/live-lab/stop` stops the named experiment session.
+
+The local live relay mirrors remote state so the browser never receives provider
+credentials. Uploaded experiments and the bundled Demo share the same automatic release
+rule: success, failure and explicit stop all stop/delete the temporary GPU.
 
 These endpoints are an internal benchmark surface. The media service host is trusted
 server configuration (`TENNISVISION_ZLM_HOST` or ignored `data/live_lab_config.json`),

@@ -110,7 +110,7 @@ async function startLiveExperiment() {
   resetTimeline();
   setVisualMode('live');
   setRunning(true, '准备中');
-  byId('sourceName').textContent = 'Demo → RTMP → ZLMediaKit';
+  byId('sourceName').textContent = 'Demo · L40S 实时实验';
   byId('analysisEmpty').hidden = false;
   byId('analysisEmpty').querySelector('strong').textContent = '正在建立真实媒体链路';
   byId('analysisEmpty').querySelector('span').textContent = '模型加载完成后才会开始原速推流';
@@ -124,6 +124,43 @@ async function startLiveExperiment() {
   } catch (error) {
     setRunning(false, '启动失败');
     toast(error.message || '真实链路启动失败');
+  }
+}
+
+async function uploadLiveExperiment(file) {
+  if (!file) return;
+  clearTimeout(state.pollTimer);
+  cancelAnimationFrame(state.animationFrame);
+  closeLivePlayback();
+  state.report = null;
+  resetTimeline();
+  setVisualMode('live');
+  setRunning(true, '正在上传');
+  byId('sourceName').textContent = file.name;
+  byId('analysisEmpty').hidden = false;
+  byId('analysisEmpty').querySelector('strong').textContent = '正在上传实验视频';
+  byId('analysisEmpty').querySelector('span').textContent = '上传完成后会自动启动临时 L40S';
+  byId('uploadLiveButton').disabled = true;
+  try {
+    const response = await fetch('/api/live-lab/upload', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name)},
+      body: file,
+      cache: 'no-store',
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || '视频上传失败');
+    state.sessionId = payload.session_id;
+    state.eventCursor = 0;
+    byId('analysisEmpty').querySelector('strong').textContent = '正在启动 L40S';
+    byId('analysisEmpty').querySelector('span').textContent = '冷启动与云端传送完成后按原始速度播放';
+    pollLiveExperiment();
+  } catch (error) {
+    setRunning(false, '启动失败');
+    toast(error.message || '上传实验没有启动');
+  } finally {
+    byId('uploadLiveButton').disabled = false;
+    byId('liveUploadInput').value = '';
   }
 }
 
@@ -272,6 +309,8 @@ function updateBaselineTimeline() {
 }
 
 byId('startLiveButton').addEventListener('click', startLiveExperiment);
+byId('uploadLiveButton').addEventListener('click', () => byId('liveUploadInput').click());
+byId('liveUploadInput').addEventListener('change', (event) => uploadLiveExperiment(event.target.files?.[0]));
 byId('useDemoButton').addEventListener('click', useDemoBaseline);
 byId('playButton').addEventListener('click', () => {
   if (state.mode !== 'baseline') return;

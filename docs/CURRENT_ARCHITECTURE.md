@@ -239,7 +239,7 @@ Production cloud releases use `Dockerfile.release`: a thin code overlay on the a
 `production-v1` ML runtime. The legacy image stores frozen weights in
 `/opt/netcast/models`; the release maps that directory to the canonical `/app/models`
 path and refuses to publish unless the ball, bounce, player-segmentation and
-player-identity checkpoints are all present. The relay currently pins `production-v11`. Short PPIO control-plane TLS
+player-identity checkpoints are all present. The relay currently pins `production-v12`. Short PPIO control-plane TLS
 disconnects while an existing instance starts are retried until the startup deadline;
 instance creation itself is never blindly retried because that could allocate two GPUs.
 
@@ -255,6 +255,14 @@ of source; the prior every-frame person/four-frame-batch worker required 102.446
 `TENNISVISION_LIVE_BATCH_SIZE` and `TENNISVISION_LIVE_PERSON_STRIDE` are bounded rollback
 controls. These settings apply only to the causal live worker; the offline production
 report continues to use its documented full-frame person path.
+
+The live-lab browser may upload a different test clip to the trusted local relay. The
+relay creates one temporary L40S, transfers the clip in checksummed chunks with purpose
+`live-lab`, and the worker stores it only as a pseudo-camera source instead of starting
+the offline notebook. The worker then publishes that source at its native rate through
+the same RTMP/ZLMediaKit path. Status and events are mirrored back under a local session
+id; completion, failure and explicit stop all release the instance. This file-upload step
+is test harness setup and is not counted as camera-stream backlog.
 
 Rendering first performs a one-frame NVENC preflight. A usable NVIDIA encoder receives the
 unchanged rendered frames with the `p4`/CQ20 quality profile; otherwise an on-demand cloud

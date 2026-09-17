@@ -20,7 +20,11 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from netcast_tennisvision.cloud.ppio_lifecycle import CloudLifecycleError, PPIOJobManager
+from netcast_tennisvision.cloud.ppio_lifecycle import (
+    CloudLifecycleError,
+    PPIOJobManager,
+    PPIOLiveJobManager,
+)
 from netcast_tennisvision.paths import REPOSITORY_ROOT
 from netcast_tennisvision.vision.display_correction import parse_display_correction
 
@@ -45,6 +49,7 @@ CLOUD_TIMEOUT_SECONDS = float(os.environ.get("TENNISVISION_CLOUD_TIMEOUT", "3600
 CLOUD_SHARED_SECRET = os.environ.get("TENNISVISION_CLOUD_SHARED_SECRET", "").strip()
 CLOUD_PROVIDER = os.environ.get("TENNISVISION_CLOUD_PROVIDER", "").strip().lower()
 cloud_manager = PPIOJobManager(ROOT, STATUS) if CLOUD_PROVIDER == "ppio" else None
+cloud_live_manager = PPIOLiveJobManager(ROOT) if CLOUD_PROVIDER == "ppio" else None
 _live_experiment_manager = None
 
 
@@ -434,7 +439,24 @@ class Handler(SimpleHTTPRequestHandler):
         if request_path in {"/api/live-lab/status", "/api/live-lab/frame"}:
             query = parse_qs(request.query)
             session_id = query.get("session_id", [""])[0]
-            session = live_experiment_manager().get(session_id)
+            cloud_payload = (
+                cloud_live_manager.snapshot(session_id, after_event=0)
+                if cloud_live_manager is not None
+                else None
+            )
+            session = None if cloud_payload is not None else live_experiment_manager().get(session_id)
+            if cloud_payload is not None:
+                if request_path.endswith("/frame"):
+                    self.send_error(HTTPStatus.NO_CONTENT)
+                    return
+                try:
+                    after_event = max(0, int(query.get("after_event", ["0"])[0]))
+                except ValueError:
+                    after_event = 0
+                events = cloud_payload.get("events", [])
+                cloud_payload["events"] = events[after_event:] if isinstance(events, list) else []
+                self.send_json(cloud_payload)
+                return
             if session is None:
                 self.send_json({"error": "实时实验会话不存在或已过期"}, HTTPStatus.NOT_FOUND)
                 return
@@ -474,10 +496,34 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if request_path == "/api/live-lab/start":
             try:
-                session = live_experiment_manager().start_demo()
-                self.send_json(session.snapshot(), HTTPStatus.ACCEPTED)
-            except (OSError, RuntimeError, ValueError) as exc:
+                if cloud_live_manager is not None:
+                    if cloud_manager is not None and cloud_manager.active:
+                        raise CloudLifecycleError("普通视频分析正在运行，请完成后再启动实时实验")
+                    snapshot = cloud_live_manager.start_live(
+                        ROOT / "assets" / "demo" / "demo.mp4",
+                        {"X-Filename": "demo.mp4"},
+                    )
+                    self.send_json(snapshot, HTTPStatus.ACCEPTED)
+                else:
+                    source = ROOT / "assets" / "demo" / "demo.mp4"
+                    try:
+                        length = int(self.headers.get("Content-Length", "0"))
+                    except ValueError:
+                        length = 0
+                    if length:
+                        payload = self.read_bounded_json(maximum=4096)
+                        if payload.get("source") == "uploaded":
+                            candidates = sorted(DATA.glob("live_lab_source.*"))
+                            if not candidates:
+                                raise RuntimeError("云端没有收到实时实验素材")
+                            source = candidates[-1]
+                    session = live_experiment_manager().start_source(source)
+                    self.send_json(session.snapshot(), HTTPStatus.ACCEPTED)
+            except (CloudLifecycleError, OSError, RuntimeError, ValueError) as exc:
                 self.send_json({"error": str(exc)}, HTTPStatus.SERVICE_UNAVAILABLE)
+            return
+        if request_path == "/api/live-lab/upload":
+            self.start_live_lab_upload()
             return
         if request_path == "/api/live-lab/webrtc-offer":
             session_id = parse_qs(urlparse(self.path).query).get("session_id", [""])[0]
@@ -497,7 +543,13 @@ class Handler(SimpleHTTPRequestHandler):
         if request_path == "/api/live-lab/stop":
             try:
                 payload = self.read_bounded_json(maximum=4096)
-                stopped = live_experiment_manager().stop(str(payload.get("session_id", "")))
+                session_id = str(payload.get("session_id", ""))
+                stopped = (
+                    cloud_live_manager.stop_live(session_id)
+                    if cloud_live_manager is not None
+                    and cloud_live_manager.snapshot(session_id) is not None
+                    else live_experiment_manager().stop(session_id)
+                )
                 self.send_json({"stopped": stopped}, HTTPStatus.OK if stopped else HTTPStatus.NOT_FOUND)
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
@@ -763,6 +815,7 @@ class Handler(SimpleHTTPRequestHandler):
             "video_fingerprint": str(payload.get("video_fingerprint", "")),
             "display_correction": str(payload.get("display_correction", "")),
             "display_corners": str(payload.get("display_corners", "")),
+            "purpose": str(payload.get("purpose", "analysis")),
             "created_at": int(time.time()),
         }
         write_json_atomic(session / "metadata.json", metadata)
@@ -797,11 +850,78 @@ class Handler(SimpleHTTPRequestHandler):
                 for part in parts:
                     with part.open("rb") as source:
                         shutil.copyfileobj(source, output, length=1024 * 1024)
-            response_status, response_payload = self.start_assembled_upload(assembled, metadata)
+            if metadata.get("purpose") == "live-lab":
+                suffix = Path(str(metadata.get("filename", "clip.mp4"))).suffix.lower()
+                DATA.mkdir(parents=True, exist_ok=True)
+                for old_source in DATA.glob("live_lab_source.*"):
+                    old_source.unlink(missing_ok=True)
+                destination = DATA / f"live_lab_source{suffix}"
+                os.replace(assembled, destination)
+                response_status, response_payload = HTTPStatus.CREATED, {
+                    "accepted": True,
+                    "source": "uploaded",
+                    "filename": str(metadata.get("filename", destination.name)),
+                }
+            else:
+                response_status, response_payload = self.start_assembled_upload(assembled, metadata)
             if response_status < 300:
                 shutil.rmtree(session)
             self.send_json(response_payload, HTTPStatus(response_status))
         except (OSError, TypeError, ValueError) as exc:
+            self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+
+    def start_live_lab_upload(self) -> None:
+        """Store one test clip locally, then run it through a temporary L40S live worker."""
+        if cloud_live_manager is None:
+            self.send_json(
+                {"error": "上传素材的 L40S 实时实验尚未配置"},
+                HTTPStatus.SERVICE_UNAVAILABLE,
+            )
+            return
+        if cloud_live_manager.active or (cloud_manager is not None and cloud_manager.active):
+            self.send_json({"error": "已有云端任务正在运行"}, HTTPStatus.CONFLICT)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = 0
+        filename = Path(unquote(self.headers.get("X-Filename", "clip.mp4"))).name
+        suffix = Path(filename).suffix.lower()
+        if not 0 < length <= MAX_VIDEO_SIZE:
+            self.send_json({"error": "视频为空或超过 4GB"}, HTTPStatus.BAD_REQUEST)
+            return
+        if suffix not in {".mp4", ".mov", ".webm", ".mkv"}:
+            self.send_json({"error": "不支持的视频格式"}, HTTPStatus.BAD_REQUEST)
+            return
+        DATA.mkdir(parents=True, exist_ok=True)
+        temporary = DATA / "live_lab_source.uploading"
+        try:
+            remaining = length
+            with temporary.open("wb") as output:
+                while remaining:
+                    chunk = self.rfile.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        raise ConnectionError("上传提前中断")
+                    output.write(chunk)
+                    remaining -= len(chunk)
+            fps = probe_native_fps(temporary)
+            if not supports_native_fps(fps):
+                raise ValueError("视频没有有效帧率")
+            for old_source in DATA.glob("live_lab_input.*"):
+                old_source.unlink(missing_ok=True)
+            clip = DATA / f"live_lab_input{suffix}"
+            os.replace(temporary, clip)
+            snapshot = cloud_live_manager.start_live(
+                clip,
+                {
+                    "X-Filename": filename,
+                    "X-Video-Fingerprint": video_fingerprint(clip),
+                },
+            )
+            snapshot["fps"] = round(fps, 3)
+            self.send_json(snapshot, HTTPStatus.ACCEPTED)
+        except (CloudLifecycleError, ConnectionError, OSError, RuntimeError, ValueError) as exc:
+            temporary.unlink(missing_ok=True)
             self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
 
     def start_assembled_upload(
@@ -932,6 +1052,8 @@ def main() -> None:
     server = ThreadingHTTPServer((host, port), Handler)
     if cloud_manager:
         cloud_manager.recover_orphan_async()
+    if cloud_live_manager:
+        cloud_live_manager.recover_orphan_async()
     print(f"Netcast TennisVision: http://{host}:{port}/web/", flush=True)
     try:
         server.serve_forever()

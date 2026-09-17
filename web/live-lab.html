@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#150c20" />
   <meta name="description" content="Netcast TennisVision 实时落点实验台：把比赛视频按直播时间轴播放，并观察落点事件的确认延迟。" />
   <title>实时落点实验 · Netcast TennisVision</title>
-  <link rel="stylesheet" href="live-lab.css?v=20260916e" />
+  <link rel="stylesheet" href="live-lab.css?v=20260917a" />
 </head>
 <body>
   <header class="lab-topbar">
@@ -25,8 +25,10 @@
       <div><span class="eyebrow">内部实时验证</span><strong>选择实验素材</strong></div>
       <div class="source-actions">
         <button class="primary-action" id="startLiveButton"><span>▶</span> 开始真实端到端实验</button>
+        <button class="upload-action" id="uploadLiveButton"><span>＋</span> 上传其他视频</button>
+        <input id="liveUploadInput" type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska" hidden />
         <button class="upload-action" id="useDemoButton"><span>◇</span> 查看离线基准回放</button>
-        <span class="chain-label">Demo → RTMP → ZLMediaKit → 在线推理 → 页面</span>
+        <span class="chain-label">视频 → 临时 L40S → RTMP / ZLMediaKit → 在线推理 → 页面</span>
       </div>
     </section>
 
@@ -84,6 +86,6 @@
   </main>
 
   <div class="toast" id="labToast" role="status" aria-live="polite"></div>
-  <script src="live-lab.js?v=20260916g"></script>
+  <script src="live-lab.js?v=20260917a"></script>
 </body>
 </html>

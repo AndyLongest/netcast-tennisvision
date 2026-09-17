@@ -17,6 +17,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from http import HTTPStatus
 from pathlib import Path
@@ -50,7 +51,7 @@ class PPIOJobManager:
         self.shared_secret = os.environ.get("TENNISVISION_CLOUD_TOKEN", "").strip()
         self.image = os.environ.get(
             "TENNISVISION_PPIO_IMAGE",
-            "image.ppinfra.com/prod-ahskpcitxxwcgdnfqfpu/netcast-tennisvision:production-v11",
+            "image.ppinfra.com/prod-ahskpcitxxwcgdnfqfpu/netcast-tennisvision:production-v12",
         ).strip()
         self.product_id = os.environ.get("TENNISVISION_PPIO_PRODUCT_ID", "L40S.22c125g")
         self.cluster_id = os.environ.get("TENNISVISION_PPIO_CLUSTER_ID", "cn-south-1")
@@ -280,13 +281,21 @@ class PPIOJobManager:
             time.sleep(2)
         raise CloudLifecycleError("云端分析服务启动超时")
 
-    def _upload_video(self, remote_url: str, clip: Path, upload_headers: dict[str, str]) -> None:
+    def _upload_video(
+        self,
+        remote_url: str,
+        clip: Path,
+        upload_headers: dict[str, str],
+        *,
+        purpose: str = "analysis",
+    ) -> dict[str, Any]:
         metadata = {
             "filename": upload_headers.get("X-Filename", clip.name),
             "total_size": clip.stat().st_size,
             "video_fingerprint": upload_headers.get("X-Video-Fingerprint", ""),
             "display_correction": upload_headers.get("X-Display-Correction", ""),
             "display_corners": upload_headers.get("X-Display-Corners", ""),
+            "purpose": purpose,
         }
         encoded = json.dumps(metadata).encode("utf-8")
         status, initialized = self._remote_request(
@@ -351,6 +360,7 @@ class PPIOJobManager:
         )
         if status >= 300:
             raise CloudLifecycleError(str(completed.get("error", "云端无法合并上传的视频")))
+        return completed
 
     def _upload_part(self, remote_url: str, upload_id: str, index: int, body: bytes) -> None:
         parsed = urlparse(remote_url)
@@ -762,3 +772,172 @@ class PPIOJobManager:
                     time.sleep(0.01 * (1 + attempt // 5))
         finally:
             temporary.unlink(missing_ok=True)
+
+
+class PPIOLiveJobManager(PPIOJobManager):
+    """Run one uploaded pseudo-live source on an auto-released PPIO worker."""
+
+    def __init__(self, root: Path) -> None:
+        super().__init__(root, root / "data" / "live_lab_cloud_status.json")
+        self.runtime_path = root / "data" / "live_lab_cloud_runtime.json"
+        self._stop_event = threading.Event()
+        self._local_session_id = ""
+        self._remote_session_id = ""
+
+    def start_live(self, clip: Path, upload_headers: dict[str, str]) -> dict[str, Any]:
+        if not self.configured:
+            raise CloudLifecycleError("L40S 按需实时实验尚未配置完整")
+        with self._lock:
+            if self.active:
+                raise CloudLifecycleError("已有实时实验正在运行")
+            self._stop_event.clear()
+            self._local_session_id = uuid.uuid4().hex
+            self._remote_session_id = ""
+            initial = {
+                "session_id": self._local_session_id,
+                "state": "preparing",
+                "stage": "正在启动临时 L40S",
+                "source_time": 0.0,
+                "analysis_time": 0.0,
+                "events": [],
+                "event_cursor": 0,
+                "execution_target": "cloud-live-l40s",
+                "filename": upload_headers.get("X-Filename", clip.name),
+            }
+            self._write_json(self.status_path, initial)
+            self._thread = threading.Thread(
+                target=self._run_live,
+                args=(clip, upload_headers, self._local_session_id),
+                name="ppio-live-lab",
+                daemon=True,
+            )
+            self._thread.start()
+            return initial
+
+    def snapshot(self, session_id: str, after_event: int = 0) -> dict[str, Any] | None:
+        payload = self._read_json(self.status_path)
+        if not session_id or payload.get("session_id") != session_id:
+            return None
+        events = payload.get("events", [])
+        payload["events"] = events[after_event:] if isinstance(events, list) else []
+        return payload
+
+    def stop_live(self, session_id: str) -> bool:
+        with self._lock:
+            if session_id != self._local_session_id or not self.active:
+                return False
+            self._stop_event.set()
+            return True
+
+    def _run_live(
+        self,
+        clip: Path,
+        upload_headers: dict[str, str],
+        local_session_id: str,
+    ) -> None:
+        instance_id: str | None = None
+        remote_url = ""
+        remote_session_id = ""
+        try:
+            instance_id = self._create_instance()
+            with self._lock:
+                self._instance_id = instance_id
+            self._write_json(
+                self.runtime_path, {"instance_id": instance_id, "created_at": int(time.time())}
+            )
+            remote_url = self._wait_for_endpoint(instance_id)
+            with self._lock:
+                self._remote_url = remote_url
+            self._wait_for_service(remote_url)
+            self._upload_camera_profiles(remote_url)
+            self._write_json(
+                self.status_path,
+                {
+                    "session_id": local_session_id,
+                    "state": "preparing",
+                    "stage": "L40S 已就绪，正在传送实验素材",
+                    "source_time": 0.0,
+                    "analysis_time": 0.0,
+                    "events": [],
+                    "event_cursor": 0,
+                    "execution_target": "cloud-live-l40s",
+                    "filename": upload_headers.get("X-Filename", clip.name),
+                },
+            )
+            self._upload_video(remote_url, clip, upload_headers, purpose="live-lab")
+            start_body = json.dumps({"source": "uploaded"}).encode("utf-8")
+            status, started = self._remote_request(
+                remote_url,
+                "POST",
+                "/api/live-lab/start",
+                body=start_body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Content-Length": str(len(start_body)),
+                },
+            )
+            if status >= 300:
+                raise CloudLifecycleError(str(started.get("error", "云端实时实验无法启动")))
+            remote_session_id = str(started.get("session_id", ""))
+            if not remote_session_id:
+                raise CloudLifecycleError("云端实时实验没有返回会话编号")
+            with self._lock:
+                self._remote_session_id = remote_session_id
+
+            while not self._stop_event.is_set():
+                status, payload = self._remote_request(
+                    remote_url,
+                    "GET",
+                    f"/api/live-lab/status?session_id={remote_session_id}&after_event=0",
+                )
+                if status >= 300:
+                    raise CloudLifecycleError(str(payload.get("error", "无法读取云端实时状态")))
+                payload["remote_session_id"] = remote_session_id
+                payload["session_id"] = local_session_id
+                payload["execution_target"] = "cloud-live-l40s"
+                payload["filename"] = upload_headers.get("X-Filename", clip.name)
+                self._write_json(self.status_path, payload)
+                if str(payload.get("state", "")) in {"complete", "error", "stopped"}:
+                    break
+                time.sleep(0.12)
+            if self._stop_event.is_set():
+                self._stop_remote_live(remote_url, remote_session_id)
+                stopped = self._read_json(self.status_path)
+                stopped.update(state="stopped", stage="实验已停止")
+                self._write_json(self.status_path, stopped)
+        except Exception as exc:
+            self._write_json(
+                self.status_path,
+                {
+                    "session_id": local_session_id,
+                    "state": "error",
+                    "stage": "L40S 实时实验未完成",
+                    "error": str(exc),
+                    "events": [],
+                    "event_cursor": 0,
+                    "execution_target": "cloud-live-l40s",
+                },
+            )
+        finally:
+            if self._stop_event.is_set() and remote_url and remote_session_id:
+                self._stop_remote_live(remote_url, remote_session_id)
+            released = self._release_instance(instance_id) if instance_id else True
+            with self._lock:
+                self._instance_id = None
+                self._remote_url = None
+                self._remote_session_id = ""
+            if released:
+                self.runtime_path.unlink(missing_ok=True)
+
+    def _stop_remote_live(self, remote_url: str, remote_session_id: str) -> None:
+        body = json.dumps({"session_id": remote_session_id}).encode("utf-8")
+        try:
+            self._remote_request(
+                remote_url,
+                "POST",
+                "/api/live-lab/stop",
+                body=body,
+                headers={"Content-Type": "application/json", "Content-Length": str(len(body))},
+            )
+        except (OSError, TimeoutError, http.client.HTTPException):
+            pass
