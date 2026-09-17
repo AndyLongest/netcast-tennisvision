@@ -374,7 +374,11 @@ class LiveExperimentSession:
                     command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
                 )
 
-            live_width, live_height = 1280, 720
+            # BallNet immediately resizes to 512x288 and YOLO uses imgsz=640.  Decode
+            # the transport stream once at 640x360 so the pipe carries 20.7 MB/s
+            # instead of 82.9 MB/s at 30 fps, without reducing either model's actual
+            # input resolution.
+            live_width, live_height = 640, 360
             raw_frame_bytes = live_width * live_height * 3
 
             def open_stream_decoder() -> subprocess.Popen[bytes]:
@@ -386,7 +390,9 @@ class LiveExperimentSession:
                 return subprocess.Popen(
                     [
                         _ffmpeg(), "-hide_banner", "-loglevel", "error",
-                        "-rw_timeout", "5000000", "-fflags", "nobuffer",
+                        "-rw_timeout", "1000000", "-rtmp_live", "live",
+                        "-rtmp_buffer", "100", "-analyzeduration", "0",
+                        "-probesize", "32", "-fflags", "nobuffer",
                         "-flags", "low_delay", "-i", stream_url,
                         "-map", "0:v:0", "-an",
                         "-vf", f"scale={live_width}:{live_height}:flags=fast_bilinear",
