@@ -274,6 +274,12 @@ that session's ECS result snapshot after its final state has been persisted loca
 relay also removes snapshots older than 24 hours as a crash-only safety net, so the ECS
 cannot silently accumulate experiment results.
 
+For an external RTMP source, decoder EOF is treated as a reconnectable signal loss rather
+than proof that the camera session ended. In the finite pseudo-camera experiment, the local
+relay sends an explicit `/api/live-lab/finish` only after its FFmpeg publisher exits with
+status zero; only then may the L40S drain the stream and mark the session complete. A remote
+`complete` received while the publisher is still alive is rejected as a premature result.
+
 Rendering first performs a one-frame NVENC preflight. A usable NVIDIA encoder receives the
 unchanged rendered frames with the `p4`/CQ20 quality profile; otherwise an on-demand cloud
 job falls back to x264 `veryfast`, CRF 22 and `faststart`. This affects only MP4 compression; it does

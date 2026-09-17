@@ -60,3 +60,10 @@ def test_expired_live_session_returns_to_clean_idle_page() -> None:
     assert "history.replaceState(null, '', window.location.pathname)" in script
     assert "restoreIdleLab('上一次实验已经结束，请开始新的测试')" in script
     assert "window.scrollTo({top: 0, left: 0, behavior: 'instant'})" in script
+
+
+def test_offline_minimap_persists_beyond_the_yellow_flash() -> None:
+    script = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+
+    assert "const confirmedEvents" in script
+    assert "const recentDecision = now - latest.t <= 1.15 ? latest : null" in script

@@ -1184,13 +1184,17 @@ function drawEventOverlay() {
   ctx.clearRect(0, 0, width, height);
   if (!state.eventOverlayReady || !state.annotated || !state.scene) return;
   const now = $('#analysisVideo').currentTime || 0;
-  const latest = [
+  const confirmedEvents = [
     ...state.scene.bounces.map((event) => ({ ...event, eventKind: 'bounce' })),
     ...(state.scene.net_hits || []).map((event) => ({ ...event, eventKind: 'net' })),
   ]
-    .filter((event) => event.t <= now && now - event.t <= 1.15)
-    .sort((a, b) => b.t - a.t)[0];
+    .filter((event) => event.t <= now)
+    .sort((a, b) => b.t - a.t);
+  const latest = confirmedEvents[0];
   if (!latest) return;
+  // The current-rally minimap persists after touchdown. Only the yellow zone flash
+  // expires; coupling both to the same 1.15-second window made the whole map vanish.
+  const recentDecision = now - latest.t <= 1.15 ? latest : null;
   const mapWidth = Math.min(154, width * 0.25), mapHeight = mapWidth * 1.62;
   const left = width - mapWidth - 18, top = height - mapHeight - 38;
   ctx.save();
@@ -1214,7 +1218,9 @@ function drawEventOverlay() {
     'Left Doubles Alley': [0, 0, 1.37, 23.77],
     'Right Doubles Alley': [9.60, 0, 10.97, 23.77],
   };
-  const bounds = latest.eventKind === 'bounce' ? zoneBounds[latest.zone] : null;
+  const bounds = recentDecision?.eventKind === 'bounce'
+    ? zoneBounds[recentDecision.zone]
+    : null;
   if (bounds) {
     ctx.fillStyle = 'rgba(242, 232, 60, .36)';
     ctx.fillRect(px(bounds[0]), py(bounds[3]), px(bounds[2]) - px(bounds[0]), py(bounds[1]) - py(bounds[3]));

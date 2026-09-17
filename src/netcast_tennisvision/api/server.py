@@ -564,6 +564,18 @@ class Handler(SimpleHTTPRequestHandler):
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
             return
+        if request_path == "/api/live-lab/finish":
+            try:
+                payload = self.read_bounded_json(maximum=4096)
+                session_id = str(payload.get("session_id", ""))
+                finished = live_experiment_manager().finish(session_id)
+                self.send_json(
+                    {"finished": finished},
+                    HTTPStatus.OK if finished else HTTPStatus.NOT_FOUND,
+                )
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
         if CLOUD_API_URL and request_path in {"/api/analyze", "/api/court-calibration"}:
             self.proxy_cloud_request("POST")
             return

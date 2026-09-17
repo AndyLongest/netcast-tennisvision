@@ -1002,7 +1002,19 @@ class PPIOLiveJobManager(PPIOJobManager):
 
             relay_deadline = time.monotonic() + 20.0
             last_relay_update = 0.0
+            source_finished = False
             while not self._stop_event.is_set():
+                producer_returncode = self._producer.poll()
+                if producer_returncode is not None and not source_finished:
+                    if producer_returncode != 0:
+                        detail = (
+                            self._producer.stderr.read() if self._producer.stderr else b""
+                        ).decode("utf-8", errors="replace")
+                        raise CloudLifecycleError(
+                            f"摄像头模拟推流中断：{detail.strip() or producer_returncode}"
+                        )
+                    self._finish_remote_live(remote_url, remote_session_id)
+                    source_finished = True
                 try:
                     payload = fetch_result_snapshot(relay_url, relay_token, local_session_id)
                 except (OSError, TimeoutError, urllib.error.URLError) as exc:
@@ -1029,18 +1041,11 @@ class PPIOLiveJobManager(PPIOJobManager):
                 payload["result_path"] = "l40s->ecs-result-relay->local"
                 payload["filename"] = upload_headers.get("X-Filename", clip.name)
                 self._write_json(self.status_path, payload)
-                if str(payload.get("state", "")) in {"complete", "error", "stopped"}:
+                remote_state = str(payload.get("state", ""))
+                if remote_state == "complete" and not source_finished:
+                    raise CloudLifecycleError("L40S 在摄像头仍推流时提前结束，已拒绝伪完成结果")
+                if remote_state in {"complete", "error", "stopped"}:
                     break
-                if self._producer.poll() is not None and str(payload.get("state", "")) != "complete":
-                    # A normal zero exit means the finite camera simulation reached
-                    # EOF; give the remote puller time to drain and close naturally.
-                    if self._producer.returncode not in {0, None}:
-                        detail = (
-                            self._producer.stderr.read() if self._producer.stderr else b""
-                        ).decode("utf-8", errors="replace")
-                        raise CloudLifecycleError(
-                            f"摄像头模拟推流中断：{detail.strip() or self._producer.returncode}"
-                        )
                 time.sleep(0.12)
             if self._stop_event.is_set():
                 self._stop_remote_live(remote_url, remote_session_id)
@@ -1142,3 +1147,15 @@ class PPIOLiveJobManager(PPIOJobManager):
             )
         except (OSError, TimeoutError, http.client.HTTPException):
             pass
+
+    def _finish_remote_live(self, remote_url: str, remote_session_id: str) -> None:
+        body = json.dumps({"session_id": remote_session_id}).encode("utf-8")
+        status, payload = self._remote_request(
+            remote_url,
+            "POST",
+            "/api/live-lab/finish",
+            body=body,
+            headers={"Content-Type": "application/json", "Content-Length": str(len(body))},
+        )
+        if status >= 300 or not payload.get("finished"):
+            raise CloudLifecycleError(str(payload.get("error", "L40S 未确认摄像头流结束")))

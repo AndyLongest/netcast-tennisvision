@@ -209,6 +209,7 @@ class LiveExperimentSession:
         self.created_at = time.time()
         self._lock = threading.Lock()
         self._stop = threading.Event()
+        self._source_finished = threading.Event()
         self._thread = threading.Thread(target=self._run, name=f"live-lab-{self.id[:8]}", daemon=True)
         self._producer: subprocess.Popen[bytes] | None = None
         self._remote_webrtc_url = ""
@@ -238,6 +239,14 @@ class LiveExperimentSession:
         self._stop.set()
         if self._producer is not None and self._producer.poll() is None:
             self._producer.terminate()
+
+    def finish_source(self) -> None:
+        """Confirm that a finite camera simulator reached EOF normally.
+
+        Decoder EOF alone is only a reconnectable signal loss. The trusted relay calls
+        this after its FFmpeg camera process exits successfully.
+        """
+        self._source_finished.set()
 
     def snapshot(self, after_event: int = 0) -> dict[str, Any]:
         with self._lock:
@@ -745,17 +754,21 @@ class LiveExperimentSession:
                             # naturally after the grace period.
                             if stream_decoder is not None and stream_decoder.poll() is None:
                                 stream_decoder.terminate()
-                            reconnect_deadline = time.monotonic() + 8.0
                             while (
-                                time.monotonic() < reconnect_deadline
-                                and not self._stop.is_set()
+                                not self._stop.is_set()
+                                and not self._source_finished.is_set()
                             ):
+                                self._update(
+                                    state="reconnecting",
+                                    stage="摄像头信号短暂中断，正在重连",
+                                )
                                 replacement = open_stream_decoder()
                                 recovered_frame = read_stream_frame(replacement)
                                 if recovered_frame is not None:
                                     stream_decoder = replacement
                                     incoming = recovered_frame
                                     ok = True
+                                    self._update(state="running", stage="真实链路在线分析中")
                                     break
                                 if replacement.poll() is None:
                                     replacement.terminate()
@@ -890,7 +903,7 @@ class LiveExperimentManager:
     def start_source(self, source: Path) -> LiveExperimentSession:
         with self._lock:
             if self._session is not None and self._session.snapshot().get("state") in {
-                "preparing", "connecting", "running",
+                "preparing", "connecting", "running", "reconnecting",
             }:
                 return self._session
             if not source.is_file():
@@ -915,7 +928,7 @@ class LiveExperimentManager:
             raise RuntimeError("实时流名称无效")
         with self._lock:
             if self._session is not None and self._session.snapshot().get("state") in {
-                "preparing", "awaiting_stream", "connecting", "running",
+                "preparing", "awaiting_stream", "connecting", "running", "reconnecting",
             }:
                 return self._session
             self._session = LiveExperimentSession(
@@ -939,6 +952,13 @@ class LiveExperimentManager:
         if session is None:
             return False
         session.stop()
+        return True
+
+    def finish(self, session_id: str) -> bool:
+        session = self.get(session_id)
+        if session is None:
+            return False
+        session.finish_source()
         return True
 
 

@@ -45,6 +45,7 @@ def test_live_manager_rejects_unknown_session() -> None:
     manager = LiveExperimentManager()
     assert manager.get("missing") is None
     assert manager.stop("missing") is False
+    assert manager.finish("missing") is False
 
 
 def test_live_manager_accepts_an_explicit_uploaded_source(tmp_path, monkeypatch) -> None:
@@ -102,6 +103,32 @@ def test_live_manager_accepts_an_external_camera_stream(monkeypatch) -> None:
     assert session.options["external_stream_name"] == "netcast-camera01"
     assert session.options["source_name"] == "court.mp4"
     assert started == [session]
+
+
+def test_live_manager_finishes_only_the_named_camera_session(monkeypatch) -> None:
+    class FakeSession:
+        def __init__(self, source, **_options) -> None:
+            self.id = "external"
+            self.finished = False
+
+        def start(self) -> None:
+            pass
+
+        def snapshot(self) -> dict[str, str]:
+            return {"state": "running"}
+
+        def finish_source(self) -> None:
+            self.finished = True
+
+    monkeypatch.setattr(
+        "netcast_tennisvision.streaming.live_experiment.LiveExperimentSession", FakeSession
+    )
+    manager = LiveExperimentManager()
+    session = manager.start_external_stream("netcast-camera01")
+
+    assert manager.finish("missing") is False
+    assert manager.finish(session.id) is True
+    assert session.finished is True
 
 
 def test_live_comparison_requires_time_and_position_agreement() -> None:
