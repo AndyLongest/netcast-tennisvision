@@ -310,6 +310,39 @@ class LiveExperimentSession:
             from ultralytics import YOLO
 
             person_model = YOLO(str(PERSON_WEIGHT))
+            if external_stream:
+                # Compile CUDA kernels and initialize both frozen models before telling
+                # the camera simulator to publish. Otherwise the first inference call
+                # can stall for several seconds and discard the opening rally even
+                # though steady-state throughput is faster than real time.
+                warm_batch = _bounded_int_env(
+                    "TENNISVISION_LIVE_BATCH_SIZE", DEFAULT_LIVE_BATCH_SIZE, 1, 64
+                )
+                warm_inputs = torch.zeros(
+                    (
+                        warm_batch,
+                        3 * (SEQUENCE_LENGTH + 1),
+                        MODEL_HEIGHT,
+                        MODEL_WIDTH,
+                    ),
+                    dtype=torch.float32,
+                    device=device,
+                )
+                with torch.inference_mode():
+                    if device.type == "cuda":
+                        with torch.autocast("cuda", dtype=torch.float16):
+                            ball_model(warm_inputs)
+                    else:
+                        ball_model(warm_inputs)
+                person_model.predict(
+                    np.zeros((720, 1280, 3), dtype=np.uint8),
+                    device=str(device),
+                    verbose=False,
+                    imgsz=640,
+                    conf=0.25,
+                    classes=[0],
+                )
+                del warm_inputs
             host = _media_host()
             webrtc_origin = _webrtc_origin(host)
             stream_name = self.external_stream_name or f"netcast-{self.id[:12]}"
