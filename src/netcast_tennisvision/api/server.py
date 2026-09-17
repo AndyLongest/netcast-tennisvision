@@ -502,6 +502,7 @@ class Handler(SimpleHTTPRequestHandler):
                     snapshot = cloud_live_manager.start_live(
                         ROOT / "assets" / "demo" / "demo.mp4",
                         {"X-Filename": "demo.mp4"},
+                        replace_active=True,
                     )
                     self.send_json(snapshot, HTTPStatus.ACCEPTED)
                 else:
@@ -886,7 +887,7 @@ class Handler(SimpleHTTPRequestHandler):
                 HTTPStatus.SERVICE_UNAVAILABLE,
             )
             return
-        if cloud_live_manager.active or (cloud_manager is not None and cloud_manager.active):
+        if cloud_manager is not None and cloud_manager.active:
             self.send_json({"error": "已有云端任务正在运行"}, HTTPStatus.CONFLICT)
             return
         try:
@@ -926,6 +927,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "X-Video-Fingerprint": video_fingerprint(clip),
                     "X-Fps": f"{fps:.6f}",
                 },
+                replace_active=True,
             )
             snapshot["fps"] = round(fps, 3)
             self.send_json(snapshot, HTTPStatus.ACCEPTED)

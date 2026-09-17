@@ -1,4 +1,5 @@
 import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -226,3 +227,28 @@ def test_live_upload_progress_keeps_browser_session_identity(tmp_path, monkeypat
     assert payload["state"] == "preparing"
     assert payload["progress"] == 7
     assert payload["session_id"] == "live-session"
+
+
+def test_new_live_upload_can_replace_an_active_session(tmp_path, monkeypatch):
+    monkeypatch.setenv("PPIO_API_KEY", "provider-secret")
+    monkeypatch.setenv("TENNISVISION_CLOUD_TOKEN", "relay-secret")
+    lifecycle = PPIOLiveJobManager(tmp_path)
+    old_session = lifecycle._local_session_id = "old-session"
+    lifecycle._stop_event.clear()
+    old_thread = threading.Thread(target=lifecycle._stop_event.wait)
+    lifecycle._thread = old_thread
+    old_thread.start()
+    clip = tmp_path / "next.mp4"
+    clip.write_bytes(b"video")
+    monkeypatch.setattr(lifecycle, "_run_live", lambda *_args: None)
+
+    snapshot = lifecycle.start_live(
+        clip,
+        {"X-Filename": "next.mp4"},
+        replace_active=True,
+    )
+
+    lifecycle._thread.join(timeout=2)
+    assert not old_thread.is_alive()
+    assert snapshot["session_id"] != old_session
+    assert snapshot["filename"] == "next.mp4"

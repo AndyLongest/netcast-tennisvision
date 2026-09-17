@@ -141,11 +141,13 @@ async function uploadLiveExperiment(file) {
   state.report = null;
   resetTimeline();
   setVisualMode('live');
-  setRunning(true, '正在上传');
+  setRunning(true, state.sessionId ? '正在切换视频' : '正在上传');
   byId('sourceName').textContent = file.name;
   byId('analysisEmpty').hidden = false;
   byId('analysisEmpty').querySelector('strong').textContent = '正在上传实验视频';
-  byId('analysisEmpty').querySelector('span').textContent = '上传完成后会自动启动临时 L40S';
+  byId('analysisEmpty').querySelector('span').textContent = state.sessionId
+    ? '上传完成后会自动结束上一场并启动新实验'
+    : '上传完成后会自动启动临时 L40S';
   byId('uploadLiveButton').disabled = true;
   try {
     const response = await fetch('/api/live-lab/upload', {

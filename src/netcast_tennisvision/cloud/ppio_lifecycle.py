@@ -815,12 +815,27 @@ class PPIOLiveJobManager(PPIOJobManager):
             )
         return envs
 
-    def start_live(self, clip: Path, upload_headers: dict[str, str]) -> dict[str, Any]:
+    def start_live(
+        self,
+        clip: Path,
+        upload_headers: dict[str, str],
+        *,
+        replace_active: bool = False,
+    ) -> dict[str, Any]:
         if not self.configured:
             raise CloudLifecycleError("L40S 按需实时实验尚未配置完整")
+        previous_thread: threading.Thread | None = None
         with self._lock:
             if self.active:
-                raise CloudLifecycleError("已有实时实验正在运行")
+                if not replace_active:
+                    raise CloudLifecycleError("已有实时实验正在运行")
+                self._stop_event.set()
+                previous_thread = self._thread
+        if previous_thread is not None:
+            previous_thread.join(timeout=120)
+            if previous_thread.is_alive():
+                raise CloudLifecycleError("上一场实验仍在释放云端资源，请稍后重试")
+        with self._lock:
             self._stop_event.clear()
             self._local_session_id = uuid.uuid4().hex
             self._remote_session_id = ""
