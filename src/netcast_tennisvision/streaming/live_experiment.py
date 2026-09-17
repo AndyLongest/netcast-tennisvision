@@ -595,7 +595,7 @@ class LiveExperimentSession:
             dropped_frames = 0
 
             def ingest() -> None:
-                nonlocal ingested_frames, last_preview, dropped_frames
+                nonlocal capture, ingested_frames, last_preview, dropped_frames
 
                 def publish(item: tuple[int, np.ndarray]) -> None:
                     nonlocal dropped_frames
@@ -634,6 +634,31 @@ class LiveExperimentSession:
                         incoming_index += 1
                     while not self._stop.is_set():
                         ok, incoming = capture.read()
+                        if not ok and external_stream:
+                            # A live RTMP subscriber can observe a short decoder/network
+                            # gap even while the publisher is healthy.  Treating one
+                            # failed read as EOF truncated otherwise valid sessions.
+                            # Reconnect for a bounded grace period; a finite pseudo-camera
+                            # that really reached EOF stays unavailable and closes
+                            # naturally after the grace period.
+                            capture.release()
+                            reconnect_deadline = time.monotonic() + 8.0
+                            while (
+                                time.monotonic() < reconnect_deadline
+                                and not self._stop.is_set()
+                            ):
+                                replacement = cv2.VideoCapture(
+                                    stream_url, cv2.CAP_FFMPEG
+                                )
+                                if replacement.isOpened():
+                                    recovered, recovered_frame = replacement.read()
+                                    if recovered:
+                                        capture = replacement
+                                        incoming = recovered_frame
+                                        ok = True
+                                        break
+                                replacement.release()
+                                time.sleep(0.25)
                         if not ok:
                             break
                         publish((incoming_index, incoming))
