@@ -27,6 +27,7 @@ def test_status_keeps_job_identity_across_pipeline_progress_updates(tmp_path, mo
     }), encoding="utf-8")
     monkeypatch.setattr(server, "STATUS", status_path)
     monkeypatch.setattr(server, "CURRENT_JOB", current_job_path)
+    monkeypatch.setattr(server, "cloud_manager", None)
 
     payload = server.status_payload()
 

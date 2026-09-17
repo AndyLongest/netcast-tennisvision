@@ -169,7 +169,7 @@ class PPIOJobManager:
             "imageAuth": "",
             "imageAuthId": "",
             "ports": "8000/http",
-            "envs": [{"key": "TENNISVISION_CLOUD_SHARED_SECRET", "value": self.shared_secret}],
+            "envs": self._instance_envs(),
             "tools": [],
             "command": (
                 "bash -lc 'cd /app && "
@@ -207,6 +207,10 @@ class PPIOJobManager:
         if not instance_id:
             raise CloudLifecycleError(f"云端没有返回实例编号：{response}")
         return instance_id
+
+    def _instance_envs(self) -> list[dict[str, str]]:
+        """Return environment shared by every temporary analysis worker."""
+        return [{"key": "TENNISVISION_CLOUD_SHARED_SECRET", "value": self.shared_secret}]
 
     def _rootfs_size_for_product(self) -> int:
         """Choose a safe root filesystem size from the live product constraints."""
@@ -783,6 +787,22 @@ class PPIOLiveJobManager(PPIOJobManager):
         self._stop_event = threading.Event()
         self._local_session_id = ""
         self._remote_session_id = ""
+
+    def _instance_envs(self) -> list[dict[str, str]]:
+        """Pass the external media relay to the isolated live worker.
+
+        The live worker cannot read the local relay's ignored runtime config file.  It
+        therefore receives only the non-secret ZLMediaKit host through the provider
+        environment while provider credentials remain local.
+        """
+        envs = super()._instance_envs()
+        host = os.environ.get("TENNISVISION_ZLM_HOST", "").strip()
+        if not host:
+            config = self._read_json(self.root / "data" / "live_lab_config.json")
+            host = str(config.get("zlm_host", "")).strip()
+        if host:
+            envs.append({"key": "TENNISVISION_ZLM_HOST", "value": host})
+        return envs
 
     def start_live(self, clip: Path, upload_headers: dict[str, str]) -> dict[str, Any]:
         if not self.configured:

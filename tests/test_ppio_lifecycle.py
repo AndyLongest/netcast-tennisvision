@@ -186,3 +186,19 @@ def test_live_manager_returns_only_new_events_for_local_session(tmp_path, monkey
 
     assert lifecycle.snapshot("missing") is None
     assert lifecycle.snapshot("local-live", after_event=1)["events"] == [{"id": 1}]
+
+
+def test_live_worker_receives_media_relay_from_runtime_config(tmp_path, monkeypatch):
+    monkeypatch.setenv("PPIO_API_KEY", "provider-secret")
+    monkeypatch.setenv("TENNISVISION_CLOUD_TOKEN", "relay-secret")
+    monkeypatch.delenv("TENNISVISION_ZLM_HOST", raising=False)
+    config = tmp_path / "data" / "live_lab_config.json"
+    config.parent.mkdir(parents=True)
+    config.write_text('{"zlm_host":"relay.example"}', encoding="utf-8")
+
+    lifecycle = PPIOLiveJobManager(tmp_path)
+
+    assert {item["key"]: item["value"] for item in lifecycle._instance_envs()} == {
+        "TENNISVISION_CLOUD_SHARED_SECRET": "relay-secret",
+        "TENNISVISION_ZLM_HOST": "relay.example",
+    }
