@@ -281,6 +281,7 @@ class LiveExperimentSession:
 
     def _run(self) -> None:
         capture: cv2.VideoCapture | None = None
+        stream_decoder: subprocess.Popen[bytes] | None = None
         try:
             external_stream = bool(self.external_stream_name)
             if not BALL_WEIGHT.is_file() or not PERSON_WEIGHT.is_file():
@@ -373,20 +374,71 @@ class LiveExperimentSession:
                     command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
                 )
 
+            live_width, live_height = 1280, 720
+            raw_frame_bytes = live_width * live_height * 3
+
+            def open_stream_decoder() -> subprocess.Popen[bytes]:
+                # OpenCV VideoCapture consumed the RTMP stream at only ~21 fps on the
+                # L40S worker.  ZLM correctly discarded old live packets, but that made
+                # a 58-second source look like a 41-second source.  FFmpeg's native
+                # demux/decode pipe keeps ingest independent from Python scheduling and
+                # delivers native-rate frames to the bounded inference queue.
+                return subprocess.Popen(
+                    [
+                        _ffmpeg(), "-hide_banner", "-loglevel", "error",
+                        "-rw_timeout", "5000000", "-fflags", "nobuffer",
+                        "-flags", "low_delay", "-i", stream_url,
+                        "-map", "0:v:0", "-an",
+                        "-vf", f"scale={live_width}:{live_height}:flags=fast_bilinear",
+                        "-pix_fmt", "bgr24", "-fps_mode", "passthrough",
+                        "-f", "rawvideo", "pipe:1",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    bufsize=raw_frame_bytes * 2,
+                )
+
+            def read_stream_frame(decoder: subprocess.Popen[bytes]) -> np.ndarray | None:
+                if decoder.stdout is None:
+                    return None
+                payload = bytearray()
+                while len(payload) < raw_frame_bytes and not self._stop.is_set():
+                    chunk = decoder.stdout.read(raw_frame_bytes - len(payload))
+                    if not chunk:
+                        return None
+                    payload.extend(chunk)
+                if len(payload) != raw_frame_bytes:
+                    return None
+                return np.frombuffer(payload, dtype=np.uint8).reshape(
+                    live_height, live_width, 3
+                )
+
             deadline = time.monotonic() + (120.0 if external_stream else 12.0)
             while time.monotonic() < deadline and not self._stop.is_set():
-                capture = cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG)
-                if capture.isOpened():
-                    ok, first_frame = capture.read()
+                if external_stream:
+                    stream_decoder = open_stream_decoder()
+                    first_frame = read_stream_frame(stream_decoder)
+                    ok = first_frame is not None
                     if ok:
                         break
-                capture.release()
-                capture = None
-                if self._producer is not None and self._producer.poll() is not None:
-                    detail = (self._producer.stderr.read() if self._producer.stderr else b"").decode(
-                        "utf-8", errors="replace"
-                    )
-                    raise RuntimeError(f"RTMP 推流失败：{detail.strip() or '媒体服务拒绝连接'}")
+                    if stream_decoder.poll() is None:
+                        stream_decoder.terminate()
+                    stream_decoder = None
+                else:
+                    capture = cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG)
+                    if capture.isOpened():
+                        ok, first_frame = capture.read()
+                        if ok:
+                            break
+                    capture.release()
+                    capture = None
+                    if self._producer is not None and self._producer.poll() is not None:
+                        detail = (
+                            self._producer.stderr.read() if self._producer.stderr else b""
+                        ).decode("utf-8", errors="replace")
+                        raise RuntimeError(
+                            f"RTMP 推流失败：{detail.strip() or '媒体服务拒绝连接'}"
+                        )
                 time.sleep(0.25)
             else:
                 if self._stop.is_set():
@@ -401,14 +453,15 @@ class LiveExperimentSession:
                 # inference, so the stream is never scanned ahead and no source frame is
                 # silently discarded.
                 for _ in range(15):
-                    ok, warmup_frame = capture.read()
-                    if not ok:
+                    warmup_frame = (
+                        read_stream_frame(stream_decoder)
+                        if stream_decoder is not None
+                        else None
+                    )
+                    if warmup_frame is None:
                         break
                     prefetched_frames.append(warmup_frame)
                 height, width = first_frame.shape[:2]
-                reported_fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
-                if reported_fps > 0:
-                    fps = reported_fps
                 resized_background = [
                     cv2.resize(frame, (MODEL_WIDTH, MODEL_HEIGHT))
                     for frame in prefetched_frames
@@ -595,7 +648,7 @@ class LiveExperimentSession:
             dropped_frames = 0
 
             def ingest() -> None:
-                nonlocal capture, ingested_frames, last_preview, dropped_frames
+                nonlocal capture, stream_decoder, ingested_frames, last_preview, dropped_frames
 
                 def publish(item: tuple[int, np.ndarray]) -> None:
                     nonlocal dropped_frames
@@ -633,7 +686,15 @@ class LiveExperimentSession:
                         )
                         incoming_index += 1
                     while not self._stop.is_set():
-                        ok, incoming = capture.read()
+                        if external_stream:
+                            incoming = (
+                                read_stream_frame(stream_decoder)
+                                if stream_decoder is not None
+                                else None
+                            )
+                            ok = incoming is not None
+                        else:
+                            ok, incoming = capture.read()
                         if not ok and external_stream:
                             # A live RTMP subscriber can observe a short decoder/network
                             # gap even while the publisher is healthy.  Treating one
@@ -641,23 +702,22 @@ class LiveExperimentSession:
                             # Reconnect for a bounded grace period; a finite pseudo-camera
                             # that really reached EOF stays unavailable and closes
                             # naturally after the grace period.
-                            capture.release()
+                            if stream_decoder is not None and stream_decoder.poll() is None:
+                                stream_decoder.terminate()
                             reconnect_deadline = time.monotonic() + 8.0
                             while (
                                 time.monotonic() < reconnect_deadline
                                 and not self._stop.is_set()
                             ):
-                                replacement = cv2.VideoCapture(
-                                    stream_url, cv2.CAP_FFMPEG
-                                )
-                                if replacement.isOpened():
-                                    recovered, recovered_frame = replacement.read()
-                                    if recovered:
-                                        capture = replacement
-                                        incoming = recovered_frame
-                                        ok = True
-                                        break
-                                replacement.release()
+                                replacement = open_stream_decoder()
+                                recovered_frame = read_stream_frame(replacement)
+                                if recovered_frame is not None:
+                                    stream_decoder = replacement
+                                    incoming = recovered_frame
+                                    ok = True
+                                    break
+                                if replacement.poll() is None:
+                                    replacement.terminate()
                                 time.sleep(0.25)
                         if not ok:
                             break
@@ -760,6 +820,12 @@ class LiveExperimentSession:
         finally:
             if capture is not None:
                 capture.release()
+            if stream_decoder is not None and stream_decoder.poll() is None:
+                stream_decoder.terminate()
+                try:
+                    stream_decoder.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    stream_decoder.kill()
             if self._producer is not None and self._producer.poll() is None:
                 self._producer.terminate()
                 try:
