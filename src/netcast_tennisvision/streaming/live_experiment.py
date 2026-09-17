@@ -39,6 +39,7 @@ from netcast_tennisvision.vision.player_identity import (
     PLAYER_COLORS_RGB,
     crop_player,
     dominant_player_color,
+    rgb_to_hex,
     select_side_players,
     stable_player_color,
 )
@@ -574,11 +575,11 @@ class LiveExperimentSession:
                 return {
                     "A": stable_player_color(
                         list(side_color_samples["near"]),
-                        "#%02x%02x%02x" % PLAYER_COLORS_RGB["A"],
+                        rgb_to_hex(PLAYER_COLORS_RGB["A"]),
                     ),
                     "B": stable_player_color(
                         list(side_color_samples["far"]),
-                        "#%02x%02x%02x" % PLAYER_COLORS_RGB["B"],
+                        rgb_to_hex(PLAYER_COLORS_RGB["B"]),
                     ),
                 }
             last_person_boxes = np.empty((0, 4), dtype=np.float32)

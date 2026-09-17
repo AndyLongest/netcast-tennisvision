@@ -31,6 +31,10 @@ POSITION_REACQUIRE_SECONDS = 1.25
 POSITION_SLACK_METRES = 1.5
 
 
+def rgb_to_hex(color: tuple[int, int, int]) -> str:
+    return "#{:02x}{:02x}{:02x}".format(*color)
+
+
 @dataclass(frozen=True)
 class IdentityResult:
     """Dense side-to-identity decisions plus auditable run metrics."""
@@ -38,7 +42,7 @@ class IdentityResult:
     frames: list[dict[str, Any]]
     metrics: dict[str, Any]
     colors: dict[str, str] = field(default_factory=lambda: {
-        identity: "#%02x%02x%02x" % PLAYER_COLORS_RGB[identity]
+        identity: rgb_to_hex(PLAYER_COLORS_RGB[identity])
         for identity in ("A", "B")
     })
 
@@ -222,7 +226,7 @@ def identity_palette(
                 samples[identity].append(colour)
     return {
         identity: stable_player_color(
-            samples[identity], "#%02x%02x%02x" % PLAYER_COLORS_RGB[identity]
+            samples[identity], rgb_to_hex(PLAYER_COLORS_RGB[identity])
         )
         for identity in ("A", "B")
     }
