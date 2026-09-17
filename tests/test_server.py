@@ -120,3 +120,50 @@ def test_video_fingerprint_uses_content_and_size(tmp_path):
 
     assert video_fingerprint(first) == video_fingerprint(renamed)
     assert video_fingerprint(first) != video_fingerprint(changed)
+
+
+def test_completed_analysis_is_archived_and_can_be_deleted(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    outputs = data / "outputs"
+    history = data / "history"
+    outputs.mkdir(parents=True)
+    (data / "clip.mp4").write_bytes(b"video")
+    (outputs / "scene3d.json").write_text(
+        json.dumps({"fps": 30, "n_frames": 300, "bounces": [{}, {}]}),
+        encoding="utf-8",
+    )
+    (outputs / "rally3d.html").write_text("<html></html>", encoding="utf-8")
+    monkeypatch.setattr(server, "DATA", data)
+    monkeypatch.setattr(server, "HISTORY", history)
+
+    server.archive_completed_analysis({
+        "state": "complete",
+        "job_id": "history-job-1",
+        "filename": "match.mp4",
+        "started_at": 100,
+        "fps": 30,
+        "file_size": 5,
+        "video_fingerprint": server.video_fingerprint(data / "clip.mp4"),
+        "event_overlay_ready": True,
+    })
+
+    records = server.analysis_history()
+    assert len(records) == 1
+    assert records[0]["duration"] == 10
+    assert records[0]["bounce_count"] == 2
+    assert records[0]["assets"]["original"].endswith("/source.mp4")
+    assert server.delete_history_record("history-job-1")
+    assert server.analysis_history() == []
+    server.archive_completed_analysis({
+        "state": "complete",
+        "job_id": "history-job-1",
+        "filename": "match.mp4",
+        "video_fingerprint": server.video_fingerprint(data / "clip.mp4"),
+    })
+    assert server.analysis_history() == []
+
+
+def test_history_delete_rejects_path_traversal(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "HISTORY", tmp_path / "history")
+
+    assert not server.delete_history_record("../outside")

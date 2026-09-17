@@ -21,6 +21,7 @@ const DEMO_OUTPUT = {
 
 const activeOutput = () => {
   if (state.isDemo) return DEMO_OUTPUT;
+  if (state.outputAssets) return state.outputAssets;
   return state.displayCorrection?.enabled ? { ...OUTPUT, original: OUTPUT.correctedOriginal } : OUTPUT;
 };
 
@@ -50,6 +51,7 @@ let state = {
   events: [], scene: null, objectUrl: null, file: null, annotated: true,
   annotatedReady: true, eventOverlayReady: false, reportVisible: false,
   displayCorrection: { enabled: false, strength: 0, corners: null },
+  outputAssets: null,
 };
 let toastTimer;
 let demoTimer;
@@ -338,6 +340,7 @@ function resetForNextAnalysis({ announce = false } = {}) {
     events: [], scene: null, objectUrl: null, file: null, annotated: true,
     annotatedReady: true, eventOverlayReady: false, reportVisible: false, renderingVideo: false,
     displayCorrection: { enabled: false, strength: 0, corners: null },
+    outputAssets: null,
   };
   setView('welcome');
   if (location.hash) history.replaceState(null, '', location.pathname + location.search);
@@ -388,6 +391,7 @@ function adoptBackendJob(status, { resumed = false } = {}) {
     jobId: status.job_id || null,
     videoFingerprint: status.video_fingerprint || null,
     displayCorrection: status.display_correction || { enabled: false, strength: 0, corners: null },
+    outputAssets: null,
   };
   setView('processing');
   updateStages(Number(status.progress) || 0);
@@ -776,6 +780,7 @@ function selectFile(file) {
     ...state, isDemo: false, generated: false, name: file.name.replace(/\.[^.]+$/, ''),
     duration: 0, events: [], scene: null, file, objectUrl: URL.createObjectURL(file), annotated: false,
     annotatedReady: false, eventOverlayReady: false, reportVisible: false, renderingVideo: false,
+    outputAssets: null,
   };
   openDisplayCorrection(file);
 }
@@ -786,6 +791,7 @@ function startDemo() {
     events: [], scene: null, file: null, annotated: true,
     annotatedReady: true, eventOverlayReady: false, reportVisible: false, renderingVideo: false,
     displayCorrection: { enabled: false, strength: 0, corners: null },
+    outputAssets: null,
   };
   startAnalysis();
 }
@@ -1005,9 +1011,7 @@ async function showResults({ annotatedReady = true, eventOverlayReady = false } 
       $('#overlayToggle').checked = true;
       $('#completeBadge').innerHTML = '<i></i> 分析完成';
       setReplayPending(false);
-      if (!$('#analysisVideo').getAttribute('src')) {
-        switchReportVideo(state.isDemo ? DEMO_OUTPUT.original : OUTPUT.original);
-      }
+      if (!$('#analysisVideo').getAttribute('src')) switchReportVideo(activeOutput().original);
       drawEventOverlay();
       return;
     }
@@ -1033,7 +1037,7 @@ async function showResults({ annotatedReady = true, eventOverlayReady = false } 
     state.annotated = annotatedReady || eventOverlayReady;
     setReplayPending(!annotatedReady && !eventOverlayReady);
     if (annotatedReady) switchReportVideo(assets.annotated);
-    else if (eventOverlayReady) switchReportVideo(state.isDemo ? DEMO_OUTPUT.original : OUTPUT.original);
+    else if (eventOverlayReady) switchReportVideo(assets.original);
     $('#sceneFrame').src = `${assets.viewer}?v=${Date.now()}`;
     $('#overlayToggle').checked = annotatedReady || eventOverlayReady;
     $('#overlayToggle').disabled = !annotatedReady && !eventOverlayReady;
@@ -1306,6 +1310,129 @@ function drawHeight() {
 
 function renderAll() { drawHeatmap(); drawHeight(); }
 
+function formatHistoryDate(timestamp) {
+  if (!timestamp) return '时间未知';
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  }).format(new Date(Number(timestamp) * 1000));
+}
+
+function formatHistorySize(bytes) {
+  const megabytes = Number(bytes) / 1024 ** 2;
+  return Number.isFinite(megabytes) ? `${megabytes.toFixed(megabytes >= 100 ? 0 : 1)} MB` : '大小未知';
+}
+
+function renderHistory(records) {
+  const list = $('#historyList');
+  list.replaceChildren();
+  $('#historyCount').textContent = records.length ? `共 ${records.length} 场已完成分析` : '还没有分析记录';
+  if (!records.length) {
+    const empty = document.createElement('div');
+    empty.className = 'history-empty';
+    const title = document.createElement('b');
+    title.textContent = '第一场比赛，等你开拍';
+    const note = document.createElement('span');
+    note.textContent = '分析完成后，视频与复盘报告会自动出现在这里。';
+    empty.append(title, note);
+    list.appendChild(empty);
+    return;
+  }
+  records.forEach((record) => {
+    const item = document.createElement('article');
+    item.className = 'history-item';
+    const icon = document.createElement('span');
+    icon.className = 'history-item-icon';
+    icon.textContent = '⌁';
+    const copy = document.createElement('div');
+    copy.className = 'history-item-copy';
+    const title = document.createElement('strong');
+    title.textContent = record.filename || '比赛视频';
+    const meta = document.createElement('span');
+    const duration = Number(record.duration) > 0 ? `${formatTime(record.duration)} · ` : '';
+    meta.textContent = `${formatHistoryDate(record.created_at)} · ${duration}${formatHistorySize(record.file_size)} · `;
+    const count = document.createElement('em');
+    count.textContent = `${Number(record.bounce_count) || 0} 个落点`;
+    meta.appendChild(count);
+    copy.append(title, meta);
+    const actions = document.createElement('div');
+    actions.className = 'history-item-actions';
+    const open = document.createElement('button');
+    open.type = 'button'; open.className = 'history-open'; open.textContent = '查看复盘';
+    open.addEventListener('click', () => openHistoryRecord(record));
+    const remove = document.createElement('button');
+    remove.type = 'button'; remove.className = 'history-delete'; remove.textContent = '删除';
+    remove.addEventListener('click', () => deleteHistoryRecord(record, remove));
+    actions.append(open, remove);
+    item.append(icon, copy, actions);
+    list.appendChild(item);
+  });
+}
+
+async function openHistory() {
+  const dialog = $('#historyDialog');
+  $('#historyCount').textContent = '正在读取…';
+  $('#historyList').innerHTML = '<div class="history-empty"><b>正在整理往期比赛</b><span>很快就好</span></div>';
+  if (!dialog.open) dialog.showModal();
+  try {
+    const response = await fetch(apiUrl('/api/history'), { cache: 'no-store' });
+    if (!response.ok) throw new Error('分析记录读取失败');
+    const payload = await response.json();
+    renderHistory(Array.isArray(payload.records) ? payload.records : []);
+  } catch (error) {
+    renderHistory([]);
+    toast(error.message || '分析记录读取失败');
+  }
+}
+
+async function openHistoryRecord(record) {
+  const assets = record.assets || {};
+  if (!assets.original || !assets.scene) {
+    toast('这场分析的本地文件已经不完整');
+    return;
+  }
+  $('#historyDialog').close();
+  clearInterval(demoTimer);
+  clearTimeout(demoResultTimer);
+  reportLoadToken += 1;
+  disableBrowserCorrection();
+  state = {
+    isDemo: false,
+    generated: true,
+    name: String(record.filename || '历史比赛').replace(/\.[^.]+$/, ''),
+    duration: Number(record.duration) || 0,
+    events: [], scene: null, objectUrl: null, file: null,
+    annotated: Boolean(assets.annotated),
+    annotatedReady: Boolean(assets.annotated),
+    eventOverlayReady: !assets.annotated,
+    reportVisible: false,
+    renderingVideo: false,
+    jobId: record.job_id,
+    displayCorrection: record.display_correction || { enabled: false, strength: 0, corners: null },
+    outputAssets: assets,
+  };
+  await showResults({
+    annotatedReady: Boolean(assets.annotated),
+    eventOverlayReady: !assets.annotated,
+  });
+}
+
+async function deleteHistoryRecord(record, button) {
+  const filename = record.filename || '这场比赛';
+  if (!window.confirm(`确定删除“${filename}”的分析记录吗？\n视频副本与复盘数据也会从本机清除。`)) return;
+  button.disabled = true;
+  try {
+    const response = await fetch(apiUrl(`/api/history/${encodeURIComponent(record.job_id)}`), {
+      method: 'DELETE',
+    });
+    if (!response.ok) throw new Error('删除失败，请稍后重试');
+    toast('分析记录已删除');
+    await openHistory();
+  } catch (error) {
+    button.disabled = false;
+    toast(error.message || '删除失败，请稍后重试');
+  }
+}
+
 $('#chooseBtn').addEventListener('click', chooseVideo);
 $('#dropZone').addEventListener('click', (event) => { if (!event.target.closest('button')) chooseVideo(); });
 ['dragenter', 'dragover'].forEach((type) => $('#dropZone').addEventListener(type, (event) => { event.preventDefault(); $('#dropZone').classList.add('dragging'); }));
@@ -1417,6 +1544,8 @@ $('#overlayToggle').addEventListener('change', (event) => {
   toast(state.annotated ? '已显示球轨迹与落地标记' : '已切换为原始比赛画面');
 });
 $('#newAnalysisBtn').addEventListener('click', () => resetForNextAnalysis({ announce: true }));
+$('#historyBtn').addEventListener('click', openHistory);
+$('#historyClose').addEventListener('click', () => $('#historyDialog').close());
 $$('.home-trigger').forEach((control) => control.addEventListener('click', (event) => {
   event.preventDefault();
   resetForNextAnalysis();

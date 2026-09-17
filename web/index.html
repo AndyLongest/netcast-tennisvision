@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#171020" />
   <meta name="description" content="Netcast TennisVision：上传任意原生帧率的固定机位网球视频，自动生成轨迹、落点与三维复盘。" />
   <title>Netcast TennisVision · 看见每一拍，读懂整场比赛</title>
-  <link rel="stylesheet" href="styles.css?v=20260917a" />
+  <link rel="stylesheet" href="styles.css?v=20260917c" />
 </head>
 <body>
   <header class="topbar">
@@ -17,7 +17,7 @@
     <nav class="main-nav" aria-label="主导航">
       <button class="nav-item active home-trigger">智能分析</button>
       <a class="nav-item nav-link" href="live-lab.html">实时落点实验</a>
-      <button class="nav-item" data-toast="完成一次分析后，报告会安全保存到本机">分析记录</button>
+      <button class="nav-item" id="historyBtn">分析记录</button>
     </nav>
     <div class="top-actions">
       <span class="engine-status" title="专业比赛分析引擎已准备就绪"><i></i><span>分析引擎</span><strong>已就绪</strong></span>
@@ -184,6 +184,14 @@
   </footer>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <dialog id="historyDialog" class="history-dialog">
+    <div class="history-head">
+      <div><span class="step-kicker">ANALYSIS ARCHIVE</span><h2>分析记录</h2><p>重新打开往期复盘，或清理不再需要的本地数据。</p></div>
+      <button class="dialog-close" id="historyClose" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="history-summary"><span id="historyCount">正在读取…</span><small>视频与报告只保存在这台设备</small></div>
+    <div class="history-list" id="historyList" aria-live="polite"></div>
+  </dialog>
   <dialog id="displayCorrectionDialog" class="display-correction-dialog">
     <button class="dialog-close" id="correctionCancel" aria-label="关闭">×</button>
     <span class="dialog-icon">◇</span>
@@ -221,6 +229,6 @@
     <button class="primary-button dialog-ok">明白了，开始分析</button>
   </dialog>
   <script src="demo-scene.js?v=20260829a"></script>
-  <script src="app.js?v=20260917b"></script>
+  <script src="app.js?v=20260917c"></script>
 </body>
 </html>

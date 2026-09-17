@@ -38,9 +38,11 @@ CURRENT_JOB = DATA / "current_job.json"
 CALIBRATION_REQUEST = DATA / "court_calibration_request.json"
 CALIBRATION_RESPONSE = DATA / "court_calibration_response.json"
 UPLOADS = DATA / "uploads"
+HISTORY = DATA / "history"
 UPLOAD_CHUNK_SIZE = 8 * 1024**2
 MAX_VIDEO_SIZE = 4 * 1024**3
 job_lock = threading.Lock()
+history_lock = threading.Lock()
 job_process: subprocess.Popen[bytes] | None = None
 ACTIVE_STATES = {"queued", "running", "needs_court_calibration", "report_ready"}
 CLOUD_API_URL = os.environ.get("TENNISVISION_CLOUD_URL", "").strip().rstrip("/")
@@ -90,7 +92,137 @@ def status_payload() -> dict[str, object]:
         else os.environ.get("TENNISVISION_EXECUTION_TARGET", "local")
     )
     status.setdefault("execution_target", default_target)
+    archive_completed_analysis(status)
     return status
+
+
+def _history_job_id(value: object) -> str | None:
+    """Return a safe directory name for one completed analysis."""
+    candidate = str(value or "")
+    if 8 <= len(candidate) <= 64 and all(char.isalnum() or char in "-_" for char in candidate):
+        return candidate
+    return None
+
+
+def _link_or_copy(source: Path, destination: Path) -> None:
+    """Snapshot a generated asset cheaply, falling back to a normal copy."""
+    if not source.is_file() or destination.is_file():
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
+    temporary.unlink(missing_ok=True)
+    try:
+        os.link(source, temporary)
+    except OSError:
+        shutil.copy2(source, temporary)
+    os.replace(temporary, destination)
+
+
+def _copy_once(source: Path, destination: Path) -> None:
+    """Copy a mutable generated file so the next run cannot rewrite old history."""
+    if not source.is_file() or destination.is_file():
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
+    temporary.unlink(missing_ok=True)
+    shutil.copy2(source, temporary)
+    os.replace(temporary, destination)
+
+
+def archive_completed_analysis(status: dict[str, object]) -> None:
+    """Persist the current report once it is readable, without duplicating large videos."""
+    if status.get("state") not in {"report_ready", "complete"}:
+        return
+    job_id = _history_job_id(status.get("job_id"))
+    scene = DATA / "outputs" / "scene3d.json"
+    source = DATA / "clip.mp4"
+    if job_id is None or not scene.is_file() or not source.is_file():
+        return
+    if (HISTORY / f".deleted-{job_id}").is_file():
+        return
+    expected_fingerprint = str(status.get("video_fingerprint") or "")
+    if not expected_fingerprint or expected_fingerprint != video_fingerprint(source):
+        return
+    with history_lock:
+        record_dir = HISTORY / job_id
+        record_path = record_dir / "record.json"
+        previous = read_json(record_path)
+        _link_or_copy(source, record_dir / "source.mp4")
+        _copy_once(scene, record_dir / "scene3d.json")
+        _copy_once(DATA / "outputs" / "rally3d.html", record_dir / "rally3d.html")
+        if status.get("annotated_video_ready"):
+            _copy_once(
+                DATA / "outputs" / "annotated_clip.mp4",
+                record_dir / "annotated_clip.mp4",
+            )
+        created_at = int(previous.get("created_at") or time.time())
+        record: dict[str, object] = {
+            "job_id": job_id,
+            "filename": Path(str(status.get("filename") or "比赛视频.mp4")).name,
+            "created_at": created_at,
+            "started_at": int(status.get("started_at") or created_at),
+            "state": str(status.get("state")),
+            "fps": status.get("fps"),
+            "file_size": status.get("file_size") or source.stat().st_size,
+            "video_fingerprint": status.get("video_fingerprint"),
+            "display_correction": status.get("display_correction")
+            or {"enabled": False, "strength": 0, "corners": None},
+            "event_overlay_ready": bool(status.get("event_overlay_ready", True)),
+            "annotated_video_ready": bool(status.get("annotated_video_ready")),
+        }
+        try:
+            scene_payload = read_json(scene)
+            fps = float(scene_payload.get("fps") or record.get("fps") or 0)
+            frames = int(scene_payload.get("n_frames") or 0)
+            record["duration"] = round(frames / fps, 2) if fps > 0 else 0
+            bounces = scene_payload.get("bounces")
+            record["bounce_count"] = len(bounces) if isinstance(bounces, list) else 0
+        except (TypeError, ValueError):
+            record["duration"] = 0
+            record["bounce_count"] = 0
+        write_json_atomic(record_path, record)
+
+
+def analysis_history() -> list[dict[str, object]]:
+    """List only complete, internally consistent history records."""
+    if not HISTORY.is_dir():
+        return []
+    records: list[dict[str, object]] = []
+    for record_path in HISTORY.glob("*/record.json"):
+        record = read_json(record_path)
+        job_id = _history_job_id(record.get("job_id"))
+        record_dir = record_path.parent
+        if job_id != record_dir.name:
+            continue
+        if not (record_dir / "scene3d.json").is_file() or not (record_dir / "source.mp4").is_file():
+            continue
+        prefix = f"/data/history/{job_id}"
+        record["assets"] = {
+            "original": f"{prefix}/source.mp4",
+            "annotated": f"{prefix}/annotated_clip.mp4"
+            if (record_dir / "annotated_clip.mp4").is_file()
+            else None,
+            "scene": f"{prefix}/scene3d.json",
+            "viewer": f"{prefix}/rally3d.html"
+            if (record_dir / "rally3d.html").is_file()
+            else None,
+        }
+        records.append(record)
+    return sorted(records, key=lambda item: int(item.get("created_at") or 0), reverse=True)
+
+
+def delete_history_record(job_id: str) -> bool:
+    """Delete exactly one validated history directory and no current working assets."""
+    safe_id = _history_job_id(job_id)
+    if safe_id is None:
+        return False
+    with history_lock:
+        record_dir = HISTORY / safe_id
+        if record_dir.parent.resolve() != HISTORY.resolve() or not record_dir.is_dir():
+            return False
+        shutil.rmtree(record_dir)
+        (HISTORY / f".deleted-{safe_id}").write_text("deleted", encoding="utf-8")
+    return True
 
 
 def video_fingerprint(path: Path, sample_size: int = 256 * 1024) -> str:
@@ -394,11 +526,12 @@ class Handler(SimpleHTTPRequestHandler):
         request_path = urlparse(self.path).path
         if request_path not in {
             "/api/status",
+            "/api/history",
             "/api/analyze",
             "/api/court-calibration",
             "/api/upload/init",
             "/api/upload/complete",
-        } and not request_path.startswith("/api/upload/chunk/"):
+        } and not request_path.startswith(("/api/upload/chunk/", "/api/history/")):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         self.send_response(HTTPStatus.NO_CONTENT)
@@ -406,7 +539,7 @@ class Handler(SimpleHTTPRequestHandler):
             "Access-Control-Allow-Origin",
             "null" if self.headers.get("Origin") == "null" else "http://127.0.0.1:4173",
         )
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header(
             "Access-Control-Allow-Headers",
             "Content-Type, X-Filename, X-Video-Fingerprint, X-Display-Correction, X-Display-Corners",
@@ -499,6 +632,19 @@ class Handler(SimpleHTTPRequestHandler):
                 after_event = 0
             self.send_json(session.snapshot(after_event))
             return
+        if request_path == "/api/history":
+            status_payload()
+            self.send_json({"records": analysis_history()})
+            return
+        if request_path.startswith("/data/history/"):
+            range_header = self.headers.get("Range")
+            if range_header and request_path.lower().endswith(".mp4"):
+                path = Path(self.translate_path(request_path))
+                if path.is_file():
+                    self.send_video_range(path, range_header)
+                    return
+            super().do_GET()
+            return
         if CLOUD_API_URL and (
             request_path.startswith("/api/") or request_path.startswith("/data/")
         ):
@@ -514,6 +660,20 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_video_range(path, range_header)
                 return
         super().do_GET()
+
+    def do_DELETE(self) -> None:
+        request_path = urlparse(self.path).path
+        if not self.cloud_request_authorized():
+            return
+        prefix = "/api/history/"
+        if not request_path.startswith(prefix):
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        job_id = unquote(request_path[len(prefix) :])
+        if not delete_history_record(job_id):
+            self.send_json({"error": "分析记录不存在"}, HTTPStatus.NOT_FOUND)
+            return
+        self.send_json({"deleted": True, "job_id": job_id})
 
     def do_POST(self) -> None:
         global job_process

@@ -13,6 +13,8 @@
 
 ## Unreleased — handoff preparation
 
+- Turned the main-page analysis archive into a durable local history: completed reports
+  can be reopened or deleted together with their isolated artifacts.
 - Added bounded parallel cloud upload/download, verified fixed-camera profile handoff and
   preflighted NVENC encoding with automatic x264 rollback; analysis inputs are unchanged.
 - Reduced cloud review-video transfer size with a same-resolution CRF22 profile validated

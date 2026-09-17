@@ -44,6 +44,20 @@ display-only perspective correction. Only one job runs at a time. A repeated req
 fingerprint reattaches; a different video receives `409 analysis_in_progress` and never
 overwrites the active clip.
 
+### Local analysis history
+
+- `GET /api/history` returns completed analyses newest-first. Each record includes the
+  sanitized filename, timestamps, duration, landing count and local URLs for its source
+  video, `scene3d.json`, and self-contained viewer.
+- `DELETE /api/history/{job_id}` deletes exactly that record and its archived local
+  artifacts. A deletion tombstone prevents the still-current completed job from being
+  recreated by a later status poll.
+
+History is owned by the trusted desktop relay, not by an ephemeral GPU worker. The source
+video is snapshotted with a filesystem hard link when supported, while mutable report
+files are copied so a later run cannot rewrite an older report. Record paths live below
+the ignored `data/history/{job_id}/` directory.
+
 ### Chunked cloud transport
 
 - `POST /api/upload/init` accepts filename, total size, video fingerprint and display

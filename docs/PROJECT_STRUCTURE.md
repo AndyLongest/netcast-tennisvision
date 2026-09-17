@@ -24,7 +24,7 @@ Tennis_Vision/
 │   ├── references/  # external evidence and implementation mapping
 │   └── history/     # retired behavior; never a runtime fallback
 ├── models/           # installed frozen weights; ignored by Git
-├── data/             # active job and latest report; ignored by Git
+├── data/             # active job, latest report and local history; ignored by Git
 └── outputs/          # diagnostics and benchmarks; ignored by Git
 ```
 
