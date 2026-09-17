@@ -1023,13 +1023,11 @@ class PPIOLiveJobManager(PPIOJobManager):
     def _start_camera_simulator(
         self, clip: Path, stream_name: str, fps: float
     ) -> subprocess.Popen[bytes]:
-        executable = shutil.which("ffmpeg")
-        if not executable:
-            packages = Path.home() / "AppData" / "Local" / "Microsoft" / "WinGet" / "Packages"
-            candidates = sorted(
-                packages.glob("Gyan.FFmpeg.Shared_*/ffmpeg-*/bin/ffmpeg.exe"), reverse=True
-            )
-            executable = str(candidates[0]) if candidates else ""
+        packages = Path.home() / "AppData" / "Local" / "Microsoft" / "WinGet" / "Packages"
+        candidates = sorted(
+            packages.glob("Gyan.FFmpeg.Shared_*/ffmpeg-*/bin/ffmpeg.exe"), reverse=True
+        )
+        executable = str(candidates[0]) if candidates else shutil.which("ffmpeg")
         if not executable:
             raise CloudLifecycleError("本机没有 FFmpeg，无法模拟摄像头推流")
         config = self._read_json(self.root / "data" / "live_lab_config.json")
