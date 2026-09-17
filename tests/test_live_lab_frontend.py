@@ -32,6 +32,13 @@ def test_live_lab_exposes_real_chain_and_separate_offline_baseline() -> None:
     assert "ZLMRTCClient.js" not in page
     assert "payload.fmp4_playback_url" in script
     assert "连续直播 · HTTPS" in script
+    assert "payload.ingested_frames" in script
+    assert "payload.processed_frames" in script
+    assert "pulseRouteLink('upload')" in script
+    assert "pulseRouteLink('result', 150)" in script
+    assert "displayedLiveSourceTime" in script
+    assert "queueLiveEvents(payload.events, payload)" in script
+    assert "算法已确认 · 等待左侧画面到达确认时刻" in script
     assert "Math.max(reportedDecision, touchdownFrame + 10)" in script
     assert '<div class="court-orientation"' in page
     assert "<span>远端</span><span>近端</span>" in page

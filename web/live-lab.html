@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#150c20" />
   <meta name="description" content="Netcast TennisVision 实时落点实验台：把比赛视频按直播时间轴播放，并观察落点事件的确认延迟。" />
   <title>实时落点实验 · Netcast TennisVision</title>
-  <link rel="stylesheet" href="live-lab.css?v=20260917a" />
+  <link rel="stylesheet" href="live-lab.css?v=20260917f" />
 </head>
 <body>
   <header class="lab-topbar">
@@ -28,7 +28,7 @@
         <button class="upload-action" id="uploadLiveButton"><span>＋</span> 上传其他视频</button>
         <input id="liveUploadInput" type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska" hidden />
         <button class="upload-action" id="useDemoButton"><span>◇</span> 查看离线基准回放</button>
-        <span class="chain-label">视频模拟摄像头 → RTMP / ZLMediaKit → 临时 L40S 拉流分析 → 页面</span>
+        <span class="chain-label">摄像头 → ECS · ZLMediaKit → L40S 推理 → ECS 结果中继 → 本机页面</span>
       </div>
     </section>
 
@@ -78,14 +78,59 @@
       </article>
     </section>
 
-    <section class="latency-explainer" aria-label="延迟组成">
-      <div class="latency-flow" aria-label="延迟组成">
-        <span><small>01</small>Demo 原速编码</span><i>→</i><span><small>02</small>RTMP / ZLMediaKit<br /><b id="flowTransport">真实链路</b></span><i>→</i><span><small>03</small>逐帧模型与固定延迟判定<br /><b id="flowAnalysis">等待实测</b></span><i>→</i><span class="accent"><small>04</small>落点到达页面</span>
+    <section class="latency-explainer" id="liveDataRoute" aria-label="实时数据链路">
+      <div class="route-heading">
+        <div><span>LIVE DATA ROUTE</span><strong>实时数据链路</strong></div>
+        <p><i></i><b id="routeStatus">等待实验开始</b></p>
+      </div>
+      <div class="data-route" id="dataRoute" data-phase="idle" aria-label="摄像头经过 ECS ZLMediaKit、L40S、ECS 结果中继返回本机的数据顺序">
+        <article class="route-node camera-node">
+          <small>01</small>
+          <div class="route-icon" aria-hidden="true"><span class="camera-glyph"></span></div>
+          <strong>场馆摄像头</strong>
+          <em id="cameraFlow">30 FPS · RTMP</em>
+        </article>
+        <div class="route-link link-upload" aria-hidden="true">
+          <span>实时推流</span><i></i><b></b>
+        </div>
+        <article class="route-node relay-node">
+          <small>02</small>
+          <div class="route-icon" aria-hidden="true"><span class="server-glyph"></span></div>
+          <strong>ECS · ZLMediaKit</strong>
+          <em id="relayFlow">RTMP / ZLMediaKit 直播流分发</em>
+        </article>
+        <div class="route-link link-pull" aria-hidden="true">
+          <span>云端拉流</span><i></i><b></b>
+        </div>
+        <article class="route-node gpu-node">
+          <small>03</small>
+          <div class="route-icon" aria-hidden="true"><span class="gpu-glyph">L40S</span></div>
+          <strong>L40S 云端推理</strong>
+          <em id="gpuFlow">落点 · 球员 · 界内外</em>
+        </article>
+        <div class="route-link link-result" aria-hidden="true">
+          <span>结果上报</span><i></i><b></b>
+        </div>
+        <article class="route-node relay-result-node">
+          <small>04</small>
+          <div class="route-icon" aria-hidden="true"><span class="server-glyph"></span></div>
+          <strong>ECS · 结果中继</strong>
+          <em id="resultRelayFlow">等待推理结果</em>
+        </article>
+        <div class="route-link link-client" aria-hidden="true">
+          <span>本机拉取</span><i></i><b></b>
+        </div>
+        <article class="route-node result-node">
+          <small>05</small>
+          <div class="route-icon" aria-hidden="true"><span class="result-glyph"></span></div>
+          <strong>本机实时落点</strong>
+          <em id="flowAnalysis">等待实测</em>
+        </article>
       </div>
     </section>
   </main>
 
   <div class="toast" id="labToast" role="status" aria-live="polite"></div>
-  <script src="live-lab.js?v=20260917d"></script>
+  <script src="live-lab.js?v=20260917h"></script>
 </body>
 </html>

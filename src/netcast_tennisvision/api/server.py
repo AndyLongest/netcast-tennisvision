@@ -518,6 +518,7 @@ class Handler(SimpleHTTPRequestHandler):
                                 str(payload.get("stream_name", "")),
                                 fps_hint=float(payload.get("fps", 30.0)),
                                 source_name=Path(str(payload.get("filename", "camera"))).name,
+                                result_session_id=str(payload.get("result_session_id", "")),
                             )
                             self.send_json(session.snapshot(), HTTPStatus.ACCEPTED)
                             return

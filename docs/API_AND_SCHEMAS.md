@@ -82,7 +82,9 @@ far-right, far-left order. Geometry validation runs before the paused job contin
   `awaiting_stream`, local FFmpeg publishes the file at native speed to ZLMediaKit.
 - `GET /api/live-lab/status?session_id=...&after_event=N` returns measured ingest/analysis
   clocks, queue backlog, newly confirmed online events, the trusted per-session HTTP-fMP4
-  playback URL and the final offline comparison.
+  playback URL and the final offline comparison. In PPIO mode these snapshots have already
+  travelled `L40S -> authenticated ECS result relay -> local service`; an unrelayed GPU
+  response is rejected rather than used as a fallback.
 - `GET /api/live-lab/frame?session_id=...` returns the latest JPEG decoded from the RTMP
   stream, not the source file. It is a diagnostics endpoint; the normal left-hand preview
   plays the ZLMediaKit HTTP-fMP4 stream directly and does not poll this endpoint.

@@ -244,8 +244,11 @@ disconnects while an existing instance starts are retried until the startup dead
 instance creation itself is never blindly retried because that could allocate two GPUs.
 
 The internal live-lab uses a different transport contract from offline uploads:
-FFmpeg publishes native-rate RTMP to ZLMediaKit, the GPU worker independently pulls that
-stream, and only confirmed events return to the browser. On L40S, the accepted
+FFmpeg publishes native-rate RTMP to ZLMediaKit and the GPU worker independently pulls
+that stream. In the reverse direction, L40S publishes authenticated JSON snapshots to a
+separate result-relay service on the same ECS; the trusted local service reads results
+only from that relay. ZLMediaKit never stores inference JSON, and there is deliberately no
+direct L40S-to-local result fallback. On L40S, the accepted
 `production-v11` worker preserves every native ball frame, batches sixteen unchanged
 RacketVision inputs per CUDA call, and runs player segmentation every fourth frame while
 causally holding the last real player boxes between samples. It queues decoded ndarrays
@@ -264,8 +267,9 @@ file stays on that camera-simulator host and is never uploaded to the inference 
 After a temporary L40S loads its frozen models and reports `awaiting_stream`, local
 FFmpeg publishes the clip at native speed to ZLMediaKit. The L40S receives only the
 unique stream name and pulls the same RTMP feed a production camera would expose.
-Status and events are mirrored back under a local session id; completion, failure and
-explicit stop terminate the local producer and release the instance.
+Status and events are written to ECS under the local session id and pulled back by the
+trusted local service. A relay outage fails visibly instead of bypassing ECS. Completion,
+failure and explicit stop terminate the local producer and release the instance.
 
 Rendering first performs a one-frame NVENC preflight. A usable NVIDIA encoder receives the
 unchanged rendered frames with the `p4`/CQ20 quality profile; otherwise an on-demand cloud

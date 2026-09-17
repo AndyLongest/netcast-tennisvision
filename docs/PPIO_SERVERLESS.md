@@ -7,8 +7,9 @@ from object-storage transfer time.
 
 The internal live-lab can also run this bundled source as a real RTMP stream on a
 temporary GPU instance. That experiment does not upload or download a finished video:
-the worker pulls the configured ZLMediaKit stream and returns only live status and landing
-events. When RTX 4090 inventory is unavailable, the same frozen code path may be measured
+the worker pulls the configured ZLMediaKit stream and writes live status and landing
+events to the authenticated ECS result relay. The local service reads that relay rather
+than polling the GPU instance for results. When RTX 4090 inventory is unavailable, the same frozen code path may be measured
 on the explicitly selected L40S product; results must name the actual GPU and may not be
 reported as a 4090 benchmark.
 
@@ -26,6 +27,22 @@ host environment. GitHub Actions uses these repository secrets:
 - `PPIO_REGISTRY_PASSWORD`
 - `PPIO_IMAGE_REPOSITORY`, for example
   `image.ppinfra.com/<account-namespace>/netcast-tennisvision`
+
+Live workers additionally receive `TENNISVISION_RESULT_RELAY_URL` and
+`TENNISVISION_RESULT_RELAY_TOKEN` from the trusted local runtime configuration. The token
+is shared only by the ECS relay, temporary GPU worker and local backend; it never reaches
+browser JavaScript or version control.
+
+## ECS result relay
+
+The media ECS runs `netcast_tennisvision.streaming.result_relay` as the
+`netcast-result-relay` container on host port 8001. Existing Nginx TLS routing exposes it
+under `/moralspaceTennisApi/netcast-results`; persistent snapshots live outside the
+container. `GET .../healthz` is public for operations, while every session read/write
+requires the bearer token. The L40S writes complete coalesced snapshots with `PUT
+/v1/sessions/{session_id}` and the local backend reads the same resource. The service
+marks stored snapshots with `result_relay=ecs`, which the local lifecycle requires before
+showing or accepting a result.
 
 The upload username, password, and namespace are shown in PPIO Console under Security
 Credentials -> Image Registry Upload Credentials.

@@ -5,6 +5,8 @@ const state = {
   mode: null, report: null, delivered: [], nextEvent: 0, activeRally: null,
   animationFrame: 0, flashTimer: 0, sessionId: null, eventCursor: 0,
   pollTimer: 0, missingPolls: 0, playbackUrl: '', playbackConnecting: false, nextPlaybackRetryAt: 0,
+  routeCounters: {ingested: null, processed: null, relayUpdated: null}, routePulseAt: {}, routePulseTimers: {},
+  pendingLiveEvents: [], latestLivePayload: null, liveSyncTimer: 0,
 };
 
 function rememberLiveSession(sessionId) {
@@ -46,6 +48,8 @@ function orderedBaselineEvents(report) {
 }
 function resetTimeline() {
   state.delivered = []; state.nextEvent = 0; state.activeRally = null; state.eventCursor = 0;
+  state.pendingLiveEvents = []; state.latestLivePayload = null;
+  clearTimeout(state.liveSyncTimer); state.liveSyncTimer = 0;
   byId('eventFeed').innerHTML = '<li class="empty-feed">等待首个落点确认…</li>';
   byId('landingCount').textContent = '0';
   byId('landingDetail').textContent = '当前回合 0 个';
@@ -65,6 +69,7 @@ function setVisualMode(mode) {
 }
 
 function closeLivePlayback() {
+  clearTimeout(state.liveSyncTimer); state.liveSyncTimer = 0;
   state.playbackConnecting = false;
   state.playbackUrl = '';
   state.nextPlaybackRetryAt = 0;
@@ -76,6 +81,65 @@ function closeLivePlayback() {
   video.srcObject = null;
   video.removeAttribute('src');
   video.load();
+}
+
+function liveEventDecisionTime(event, payload) {
+  const fps = Math.max(1, Number(payload?.fps) || 30);
+  const frame = Number.isFinite(Number(event.decision_frame))
+    ? Number(event.decision_frame)
+    : Number(event.touchdown_frame_f ?? event.frame);
+  return Math.max(0, frame / fps);
+}
+
+function displayedLiveSourceTime(payload) {
+  const video = byId('liveVideo');
+  if (video.hidden || video.readyState < 2 || video.paused) return null;
+  const sourceTime = Math.max(0, Number(payload?.source_time) || 0);
+  if (video.seekable?.length) {
+    const edge = Number(video.seekable.end(video.seekable.length - 1));
+    const current = Number(video.currentTime) || 0;
+    if (Number.isFinite(edge) && edge >= current) {
+      return Math.max(0, sourceTime - Math.min(60, edge - current));
+    }
+  }
+  const current = Number(video.currentTime);
+  return Number.isFinite(current) && current <= sourceTime + 2 ? Math.max(0, current) : null;
+}
+
+function scheduleLiveEventSync() {
+  clearTimeout(state.liveSyncTimer);
+  if (state.mode !== 'live' || !state.pendingLiveEvents.length) return;
+  state.liveSyncTimer = setTimeout(flushLiveEventsAgainstPlayback, 80);
+}
+
+function flushLiveEventsAgainstPlayback() {
+  const payload = state.latestLivePayload;
+  if (!payload || state.mode !== 'live') return;
+  const displayedTime = displayedLiveSourceTime(payload);
+  if (displayedTime != null) {
+    while (state.pendingLiveEvents.length) {
+      const queued = state.pendingLiveEvents[0];
+      if (liveEventDecisionTime(queued.event, payload) > displayedTime + 0.025) break;
+      state.pendingLiveEvents.shift();
+      const syncWaitMs = Math.max(0, performance.now() - queued.receivedAt);
+      const visibleDelayMs = queued.algorithmDelayMs + syncWaitMs;
+      deliverEvent(queued.event, visibleDelayMs, true);
+      byId('latencyDetail').textContent = `算法 ${Math.round(queued.algorithmDelayMs)} 毫秒 · 画面同步 ${Math.round(syncWaitMs)} 毫秒`;
+    }
+  }
+  scheduleLiveEventSync();
+}
+
+function queueLiveEvents(events, payload) {
+  for (const event of events || []) {
+    state.pendingLiveEvents.push({
+      event,
+      receivedAt: performance.now(),
+      algorithmDelayMs: Math.max(0, Number(event.end_to_end_delay_ms) || 0),
+    });
+  }
+  state.pendingLiveEvents.sort((a, b) => liveEventDecisionTime(a.event, payload) - liveEventDecisionTime(b.event, payload));
+  flushLiveEventsAgainstPlayback();
 }
 
 async function connectLivePlayback(playbackUrl) {
@@ -108,6 +172,84 @@ function setRunning(running, label) {
   byId('enginePill').lastChild.textContent = running ? ' 在线推理中' : ' 等待数据';
 }
 
+function setRoutePhase(stateName) {
+  const phases = {
+    queued: ['boot', '正在申请 L40S 算力'],
+    preparing: ['boot', 'L40S 正在启动'],
+    awaiting_stream: ['relay', 'ZLMediaKit 等待拉流'],
+    connecting: ['relay', '正在建立实时链路'],
+    running: ['live', '实时数据正在流动'],
+    complete: ['complete', '本轮链路已完成'],
+    stopped: ['idle', '实验已停止'],
+    error: ['error', '实时链路已中断'],
+    baseline: ['idle', '离线基准不经过实时链路'],
+    idle: ['idle', '等待实验开始'],
+  };
+  const [phase, label] = phases[stateName] || phases.idle;
+  byId('dataRoute').dataset.phase = phase;
+  byId('routeStatus').textContent = label;
+  byId('routeStatus').parentElement.classList.toggle('live', phase === 'live');
+}
+
+function resetRouteFlow() {
+  state.routeCounters = {ingested: null, processed: null, relayUpdated: null};
+  state.routePulseAt = {};
+  Object.values(state.routePulseTimers).forEach(clearTimeout);
+  state.routePulseTimers = {};
+  document.querySelectorAll('.route-link').forEach((link) => link.classList.remove('flowing'));
+  byId('cameraFlow').textContent = '30 FPS · RTMP';
+  byId('relayFlow').textContent = 'RTMP / ZLMediaKit 直播流分发';
+  byId('gpuFlow').textContent = '落点 · 球员 · 界内外';
+  byId('resultRelayFlow').textContent = '等待推理结果';
+  byId('flowAnalysis').textContent = '等待实测';
+}
+
+function pulseRouteLink(name, delay = 0) {
+  const now = performance.now();
+  if (now - Number(state.routePulseAt[name] || 0) < 360) return;
+  state.routePulseAt[name] = now + delay;
+  clearTimeout(state.routePulseTimers[name]);
+  clearTimeout(state.routePulseTimers[`${name}End`]);
+  state.routePulseTimers[name] = setTimeout(() => {
+    const link = document.querySelector(`.link-${name}`);
+    if (!link || byId('dataRoute').dataset.phase !== 'live') return;
+    link.classList.remove('flowing');
+    void link.offsetWidth;
+    link.classList.add('flowing');
+    state.routePulseTimers[`${name}End`] = setTimeout(() => link.classList.remove('flowing'), 560);
+  }, delay);
+}
+
+function syncRouteFlow(payload) {
+  const ingested = Math.max(0, Number(payload.ingested_frames) || 0);
+  const processed = Math.max(0, Number(payload.processed_frames) || 0);
+  const sourceSeconds = Math.max(0, Number(payload.source_time) || 0);
+  const backlog = Math.max(0, Number(payload.backlog_seconds) || 0);
+  const relayUpdated = Math.max(0, Number(payload.relay_updated_at) || 0);
+  const ingestAdvanced = state.routeCounters.ingested == null
+    ? ingested > 0 : ingested > state.routeCounters.ingested;
+  const processAdvanced = state.routeCounters.processed == null
+    ? processed > 0 : processed > state.routeCounters.processed;
+  const relayAdvanced = state.routeCounters.relayUpdated == null
+    ? relayUpdated > 0 : relayUpdated > state.routeCounters.relayUpdated;
+
+  if (payload.state === 'running' && ingestAdvanced) {
+    pulseRouteLink('upload');
+    pulseRouteLink('pull', 80);
+  }
+  if (payload.state === 'running' && processAdvanced) pulseRouteLink('result', 150);
+  if (payload.state === 'running' && relayAdvanced) pulseRouteLink('client', 230);
+
+  state.routeCounters.ingested = ingested;
+  state.routeCounters.processed = processed;
+  state.routeCounters.relayUpdated = relayUpdated;
+  byId('cameraFlow').textContent = `RTMP · ${formatClock(sourceSeconds).slice(0, 5)} 已推送`;
+  byId('relayFlow').textContent = `${ingested.toLocaleString()} 帧已送达 L40S`;
+  byId('gpuFlow').textContent = `${processed.toLocaleString()} 帧已完成分析`;
+  byId('resultRelayFlow').textContent = `${Number(payload.event_cursor) || 0} 个落点已中继`;
+  byId('flowAnalysis').textContent = `${Number(payload.event_cursor) || 0} 个落点 · ${backlog.toFixed(2)} 秒积压`;
+}
+
 async function startLiveExperiment() {
   clearTimeout(state.pollTimer);
   cancelAnimationFrame(state.animationFrame);
@@ -116,6 +258,8 @@ async function startLiveExperiment() {
   resetTimeline();
   setVisualMode('live');
   setRunning(true, '准备中');
+  resetRouteFlow();
+  setRoutePhase('preparing');
   byId('sourceName').textContent = 'Demo · L40S 实时实验';
   byId('analysisEmpty').hidden = false;
   byId('analysisEmpty').querySelector('strong').textContent = '正在建立真实媒体链路';
@@ -129,6 +273,7 @@ async function startLiveExperiment() {
     pollLiveExperiment();
   } catch (error) {
     setRunning(false, '启动失败');
+    setRoutePhase('error');
     toast(error.message || '真实链路启动失败');
   }
 }
@@ -142,6 +287,8 @@ async function uploadLiveExperiment(file) {
   resetTimeline();
   setVisualMode('live');
   setRunning(true, state.sessionId ? '正在切换视频' : '正在上传');
+  resetRouteFlow();
+  setRoutePhase('preparing');
   byId('sourceName').textContent = file.name;
   byId('analysisEmpty').hidden = false;
   byId('analysisEmpty').querySelector('strong').textContent = '正在上传实验视频';
@@ -165,6 +312,7 @@ async function uploadLiveExperiment(file) {
     pollLiveExperiment();
   } catch (error) {
     setRunning(false, '启动失败');
+    setRoutePhase('error');
     toast(error.message || '上传实验没有启动');
   } finally {
     byId('uploadLiveButton').disabled = false;
@@ -186,17 +334,21 @@ async function pollLiveExperiment() {
     }
     if (!response.ok) throw new Error(payload.error || '实时状态读取失败');
     state.missingPolls = 0;
+    state.latestLivePayload = payload;
     const running = ['queued', 'preparing', 'awaiting_stream', 'connecting', 'running'].includes(payload.state);
     setRunning(running, payload.stage || (running ? '直播中' : '已完成'));
+    setRoutePhase(payload.state);
+    syncRouteFlow(payload);
     byId('sourceClock').textContent = formatClock(payload.source_time);
     byId('videoHudClock').textContent = formatClock(payload.analysis_time);
     byId('resultClock').textContent = formatClock(payload.analysis_time);
     const backlog = Math.max(0, Number(payload.backlog_seconds) || 0);
     byId('latencyValue').textContent = `${backlog.toFixed(2)} 秒`;
-    byId('latencyDetail').textContent = payload.latest_event_delay_ms == null
+    byId('latencyDetail').textContent = state.pendingLiveEvents.length
+      ? '算法已确认 · 等待左侧画面到达确认时刻'
+      : payload.latest_event_delay_ms == null
       ? '摄像头时间 − 算法处理时间'
       : `最近落点端到端 ${Math.round(payload.latest_event_delay_ms)} 毫秒`;
-    byId('flowAnalysis').textContent = `${backlog.toFixed(2)} 秒积压`;
     if (!state.playbackUrl && !state.playbackConnecting) {
       byId('measuredBadge').textContent = payload.device ? '等待连续直播画面' : '正在准备模型';
     }
@@ -204,7 +356,7 @@ async function pollLiveExperiment() {
         && Date.now() >= state.nextPlaybackRetryAt) {
       connectLivePlayback(payload.fmp4_playback_url);
     }
-    for (const event of payload.events || []) deliverEvent(event, Number(event.end_to_end_delay_ms) || 0, true);
+    queueLiveEvents(payload.events, payload);
     state.eventCursor = Number(payload.event_cursor) || state.eventCursor;
     if ((payload.events || []).length) byId('analysisEmpty').hidden = true;
     if (payload.state === 'error') throw new Error(payload.error || '端到端实验中断');
@@ -220,6 +372,7 @@ async function pollLiveExperiment() {
     }
   } catch (error) {
     setRunning(false, '实验中断');
+    setRoutePhase('error');
     toast(error.message || '实时实验连接中断');
   }
 }
@@ -232,6 +385,8 @@ async function useDemoBaseline() {
     if (!response.ok) throw new Error('Demo 分析结果读取失败');
     state.report = await response.json();
     setVisualMode('baseline');
+    resetRouteFlow();
+    setRoutePhase('baseline');
     resetTimeline();
     const video = byId('liveVideo');
     video.src = DEMO_VIDEO;
@@ -350,8 +505,12 @@ if (resumeSession) {
   resetTimeline();
   setVisualMode('live');
   setRunning(true, '正在恢复实验');
+  resetRouteFlow();
+  setRoutePhase('preparing');
   byId('analysisEmpty').hidden = false;
   byId('analysisEmpty').querySelector('strong').textContent = '正在重新连接云端实验';
   byId('analysisEmpty').querySelector('span').textContent = '刷新页面不会中断正在运行的 L40S';
   pollLiveExperiment();
+} else {
+  setRoutePhase('idle');
 }

@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from netcast_tennisvision.streaming.result_relay import fetch_result_snapshot
+
 PPIO_API = "https://api.ppio.com/gpu-instance/openapi/v1"
 REMOTE_OUTPUTS = {"scene3d.json": True, "rally3d.html": True, "corrected_clip.mp4": False}
 TRANSFER_CHUNK_SIZE = 8 * 1024**2
@@ -813,7 +815,24 @@ class PPIOLiveJobManager(PPIOJobManager):
             envs.append(
                 {"key": "TENNISVISION_ZLM_WEBRTC_ORIGIN", "value": playback_origin}
             )
+        relay_url, relay_token = self._result_relay_config()
+        if relay_url and relay_token:
+            envs.extend(
+                [
+                    {"key": "TENNISVISION_RESULT_RELAY_URL", "value": relay_url},
+                    {"key": "TENNISVISION_RESULT_RELAY_TOKEN", "value": relay_token},
+                ]
+            )
         return envs
+
+    def _result_relay_config(self) -> tuple[str, str]:
+        config = self._read_json(self.root / "data" / "live_lab_config.json")
+        url = os.environ.get("TENNISVISION_RESULT_RELAY_URL", "").strip()
+        token = os.environ.get("TENNISVISION_RESULT_RELAY_TOKEN", "").strip()
+        return (
+            url or str(config.get("result_relay_url", "")).strip(),
+            token or str(config.get("result_relay_token", "")).strip(),
+        )
 
     def start_live(
         self,
@@ -824,6 +843,9 @@ class PPIOLiveJobManager(PPIOJobManager):
     ) -> dict[str, Any]:
         if not self.configured:
             raise CloudLifecycleError("L40S 按需实时实验尚未配置完整")
+        relay_url, relay_token = self._result_relay_config()
+        if not relay_url or not relay_token:
+            raise CloudLifecycleError("ECS 推理结果中继尚未配置完整")
         previous_thread: threading.Thread | None = None
         with self._lock:
             if self.active:
@@ -884,6 +906,7 @@ class PPIOLiveJobManager(PPIOJobManager):
         instance_id: str | None = None
         remote_url = ""
         remote_session_id = ""
+        relay_url, relay_token = self._result_relay_config()
         try:
             instance_id = self._create_instance()
             with self._lock:
@@ -926,6 +949,7 @@ class PPIOLiveJobManager(PPIOJobManager):
                     "stream_name": stream_name,
                     "fps": fps,
                     "filename": upload_headers.get("X-Filename", clip.name),
+                    "result_session_id": local_session_id,
                 }
             ).encode("utf-8")
             status, started = self._remote_request(
@@ -973,17 +997,33 @@ class PPIOLiveJobManager(PPIOJobManager):
 
             self._producer = self._start_camera_simulator(clip, stream_name, fps)
 
+            relay_deadline = time.monotonic() + 20.0
+            last_relay_update = 0.0
             while not self._stop_event.is_set():
-                status, payload = self._remote_request(
-                    remote_url,
-                    "GET",
-                    f"/api/live-lab/status?session_id={remote_session_id}&after_event=0",
-                )
-                if status >= 300:
-                    raise CloudLifecycleError(str(payload.get("error", "无法读取云端实时状态")))
+                try:
+                    payload = fetch_result_snapshot(relay_url, relay_token, local_session_id)
+                except (OSError, TimeoutError, urllib.error.URLError) as exc:
+                    if time.monotonic() >= relay_deadline:
+                        raise CloudLifecycleError(f"无法从 ECS 读取推理结果：{exc}") from exc
+                    time.sleep(0.12)
+                    continue
+                if payload is None:
+                    if time.monotonic() >= relay_deadline:
+                        raise CloudLifecycleError("L40S 未向 ECS 上报推理结果")
+                    time.sleep(0.12)
+                    continue
+                if payload.get("result_relay") != "ecs":
+                    raise CloudLifecycleError("拒绝未经过 ECS 中继的推理结果")
+                relay_update = float(payload.get("relay_updated_at", 0.0) or 0.0)
+                if relay_update > last_relay_update:
+                    last_relay_update = relay_update
+                    relay_deadline = time.monotonic() + 20.0
+                elif time.monotonic() >= relay_deadline:
+                    raise CloudLifecycleError("ECS 上的 L40S 推理结果已停止更新")
                 payload["remote_session_id"] = remote_session_id
                 payload["session_id"] = local_session_id
                 payload["execution_target"] = "cloud-live-l40s"
+                payload["result_path"] = "l40s->ecs-result-relay->local"
                 payload["filename"] = upload_headers.get("X-Filename", clip.name)
                 self._write_json(self.status_path, payload)
                 if str(payload.get("state", "")) in {"complete", "error", "stopped"}:

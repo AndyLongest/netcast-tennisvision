@@ -232,6 +232,8 @@ def test_live_upload_progress_keeps_browser_session_identity(tmp_path, monkeypat
 def test_new_live_upload_can_replace_an_active_session(tmp_path, monkeypatch):
     monkeypatch.setenv("PPIO_API_KEY", "provider-secret")
     monkeypatch.setenv("TENNISVISION_CLOUD_TOKEN", "relay-secret")
+    monkeypatch.setenv("TENNISVISION_RESULT_RELAY_URL", "https://relay.example/results")
+    monkeypatch.setenv("TENNISVISION_RESULT_RELAY_TOKEN", "result-secret")
     lifecycle = PPIOLiveJobManager(tmp_path)
     old_session = lifecycle._local_session_id = "old-session"
     lifecycle._stop_event.clear()

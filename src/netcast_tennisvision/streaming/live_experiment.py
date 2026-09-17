@@ -32,6 +32,7 @@ import torch
 from netcast_tennisvision.events.landing_event_detector import detect_landing_impulses
 from netcast_tennisvision.events.line_call import classify_line_call
 from netcast_tennisvision.paths import REPOSITORY_ROOT
+from netcast_tennisvision.streaming.result_relay import ResultRelayPublisher
 from netcast_tennisvision.tracking.geometry import inside_player_body
 from netcast_tennisvision.tracking.world_tracker import track_ball_persistent
 from netcast_tennisvision.vision.racketvision import (
@@ -197,12 +198,14 @@ class LiveExperimentSession:
         external_stream_name: str = "",
         fps_hint: float = 30.0,
         source_name: str = "camera",
+        result_session_id: str = "",
     ) -> None:
         self.id = uuid.uuid4().hex
         self.source = source
         self.external_stream_name = external_stream_name
         self.fps_hint = fps_hint if fps_hint > 0 else 30.0
         self.source_name = source.name if source is not None else source_name
+        self.result_session_id = result_session_id
         self.created_at = time.time()
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -223,6 +226,10 @@ class LiveExperimentSession:
             "execution": "真实 RTMP / ZLMediaKit / 在线推理",
             "source_name": self.source_name,
         }
+        self._result_publisher = ResultRelayPublisher.from_environment(result_session_id)
+        if self._result_publisher is not None:
+            self._status["result_path"] = "l40s->ecs-result-relay"
+            self._publish_result_snapshot()
 
     def start(self) -> None:
         self._thread.start()
@@ -270,6 +277,8 @@ class LiveExperimentSession:
     def _update(self, **values: Any) -> None:
         with self._lock:
             self._status.update(values)
+        if self._result_publisher is not None:
+            self._publish_result_snapshot()
 
     def _fail(self, error: BaseException) -> None:
         self._update(state="error", stage="实验中断", error=str(error))
@@ -278,6 +287,17 @@ class LiveExperimentSession:
         with self._lock:
             self._events.append(event)
             self._status["latest_event_delay_ms"] = event["end_to_end_delay_ms"]
+        if self._result_publisher is not None:
+            self._publish_result_snapshot()
+
+    def _publish_result_snapshot(self) -> None:
+        if self._result_publisher is None:
+            return
+        payload = self.snapshot()
+        payload["worker_session_id"] = payload["session_id"]
+        payload["session_id"] = self.result_session_id
+        payload["execution_target"] = "cloud-live-l40s"
+        self._result_publisher.publish(payload)
 
     def _run(self) -> None:
         capture: cv2.VideoCapture | None = None
@@ -855,6 +875,8 @@ class LiveExperimentSession:
                     self._producer.kill()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            if self._result_publisher is not None:
+                self._result_publisher.close()
 
 
 class LiveExperimentManager:
@@ -883,6 +905,7 @@ class LiveExperimentManager:
         *,
         fps_hint: float = 30.0,
         source_name: str = "camera",
+        result_session_id: str = "",
     ) -> LiveExperimentSession:
         """Analyze a camera-shaped RTMP stream without receiving its source file."""
         if not stream_name or any(
@@ -900,6 +923,7 @@ class LiveExperimentManager:
                 external_stream_name=stream_name,
                 fps_hint=fps_hint,
                 source_name=source_name,
+                result_session_id=result_session_id,
             )
             self._session.start()
             return self._session
