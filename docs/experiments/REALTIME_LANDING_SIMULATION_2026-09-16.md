@@ -81,3 +81,38 @@ This is an honest negative result for the current local hardware and live algori
 previous ~0.35-second number was only the event window after an already available
 trajectory and was never complete pipeline latency. The final event comparison is written
 to ignored runtime file `data/live_lab_last.json` by every completed experiment.
+
+## PPIO L40S end-to-end run (2026-09-17)
+
+`production-v10` was run once on an on-demand `L40S.22c125g` instance. The worker did not
+upload an offline clip or read cached detections: it published the bundled demo at source
+speed to the external ZLMediaKit endpoint, pulled the RTMP stream back from that endpoint,
+and executed the same online ball, person, bounded tracker and event code on CUDA.
+
+| Metric | Result |
+|---|---:|
+| Source duration / frames | 58.067s / 1,737 |
+| Online analysis wall time | 102.446s |
+| End-to-end inference factor | **1.764× source duration** |
+| Peak queued source time | 24.905s |
+| Cold start to public endpoint | 66.000s |
+| Cold start to healthy API | 66.352s |
+| Total request-to-result wall time | 174.540s |
+| Online/reference matched events | 14 / 29 |
+
+The GPU reduced the complete live-chain factor from 4.90–5.03× locally to 1.764×, a
+2.78–2.85× throughput improvement. It still failed the live requirement because frames
+arrived at 29.91fps while the complete online pipeline sustained about 16.96fps. Event
+delivery delay therefore grew with match time; the fixed 0.35-second evidence window was
+not the dominant delay.
+
+The temporary instance `448a7f27ba8b43f9` was stopped and deleted after the run, and a
+provider lookup subsequently returned resource-not-found. Raw results are intentionally
+kept in ignored local file `outputs/l40s_live_benchmark.json`; the reproducible controller
+is `tools/benchmark_live_cloud.py`.
+
+This run establishes the next optimization boundary: merely replacing the RTX 3050 Ti
+with L40S is insufficient. The live worker still invokes person inference on every frame
+and repeatedly recomputes tracking over a fixed window after every four frames. Those
+branches must become temporally sparse/incremental while preserving contact and landing
+frames before another server-size decision is made.

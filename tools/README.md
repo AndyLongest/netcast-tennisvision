@@ -40,6 +40,7 @@ the repository root.
 | `benchmark_pipeline_variant.py` | End-to-end feature-flag combinations |
 | `benchmark_production_batching.py` | Production ball-batch equivalence |
 | `benchmark_racketvision_batch.py` | Detector-only batch sizes |
+| `benchmark_live_cloud.py` | True RTMP/ZLMediaKit live chain on one auto-released PPIO GPU |
 
 Benchmark scripts may measure rejected variants. A script's presence does not mean its
 variant is enabled. Production decisions are recorded in
