@@ -85,3 +85,10 @@ def test_offline_minimap_persists_beyond_the_yellow_flash() -> None:
     assert "drawVideoBallAndTrail(ctx, width, height, now)" in script
     assert "courtProjector(state.scene.court_image_corners" in script
     assert "zoneBounds[recentDecision.zone]" in script
+
+
+def test_completed_report_reuse_is_algorithm_versioned() -> None:
+    script = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+
+    assert "const ANALYSIS_VERSION = 'production-v27'" in script
+    assert "current.algorithm_version === ANALYSIS_VERSION" in script

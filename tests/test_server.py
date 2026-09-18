@@ -123,6 +123,10 @@ def test_video_fingerprint_uses_content_and_size(tmp_path):
     assert video_fingerprint(first) != video_fingerprint(changed)
 
 
+def test_analysis_version_matches_the_cloud_release():
+    assert server.ANALYSIS_VERSION == "production-v27"
+
+
 def test_completed_analysis_is_archived_and_can_be_deleted(tmp_path, monkeypatch):
     data = tmp_path / "data"
     outputs = data / "outputs"

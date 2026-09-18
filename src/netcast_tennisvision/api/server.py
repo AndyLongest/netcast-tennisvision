@@ -43,6 +43,7 @@ CACHE = DATA / "cache"
 OUTPUTS = DATA / "outputs"
 UPLOAD_CHUNK_SIZE = 8 * 1024**2
 MAX_VIDEO_SIZE = 4 * 1024**3
+ANALYSIS_VERSION = "production-v27"
 job_lock = threading.Lock()
 history_lock = threading.Lock()
 job_process: subprocess.Popen[bytes] | None = None
@@ -167,6 +168,7 @@ def archive_completed_analysis(status: dict[str, object]) -> None:
             "fps": status.get("fps"),
             "file_size": status.get("file_size") or source.stat().st_size,
             "video_fingerprint": status.get("video_fingerprint"),
+            "algorithm_version": status.get("algorithm_version"),
             "display_correction": status.get("display_correction")
             or {"enabled": False, "strength": 0, "corners": None},
             "event_overlay_ready": bool(status.get("event_overlay_ready", True)),
@@ -1001,6 +1003,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "filename": filename,
                 "file_size": length,
                 "video_fingerprint": fingerprint,
+                "algorithm_version": ANALYSIS_VERSION,
                 "fps": round(fps, 3),
                 "workload_factor": workload_factor,
                 "display_correction": display_correction,
