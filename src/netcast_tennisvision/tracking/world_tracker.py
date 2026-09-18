@@ -111,8 +111,11 @@ def track_ball_persistent(
     birth_hits = 3
     birth_span = min_track_span * (0.45 if training_mode else 1.0)
     hypothesis_beam = 36 if training_mode else 12
-    net_grace = max(4, int(round(0.20 * fps)))
-    net_band = max(10.0 * spatial, 0.025 * height)
+    # Net calls deliberately favour precision. A detector miss after an ordinary
+    # crossing is far more common than a true net stop, so a disappearance must begin
+    # beside the net while the last measured velocity is actually approaching it.
+    net_grace = max(8, int(round(0.33 * fps)))
+    net_band = max(12.0 * spatial, 0.025 * height)
     exit_margin = max(12.0 * spatial, 0.025 * min(width, height))
 
     raw_segments: list[dict[str, Any]] = []
@@ -490,6 +493,7 @@ def track_ball_persistent(
                 active["last_seen"] = frame
                 active["coast"] = 0
                 active["net_pending"] = 0
+                active["net_candidate_frame"] = None
                 active["pending_terminal"] = None
                 search_radius_used[frame] = radius
                 search_axes_used[frame] = (float(axes[0]), float(axes[1]))
@@ -514,15 +518,28 @@ def track_ball_persistent(
                 if exited:
                     active["pending_terminal"] = "out_of_frame"
 
-                # The projected net line varies slightly with camera motion.  Enter a
-                # short pending state when the flight reaches that band; only terminate if
-                # no visual observation reappears during the confirmation window.
-                net_y = meta.get("net_y_px")
-                if net_y is not None and active.get("pending_terminal") != "out_of_frame":
-                    crossed = (previous_position[1] - net_y) * (predicted[1] - net_y) <= 0
-                    near_net = abs(previous_position[1] - net_y) <= net_band
-                    if active.get("net_pending", 0) or crossed or near_net:
-                        active["net_pending"] = active.get("net_pending", 0) + 1
+                # Arm a net terminal only at the first missing frame. The old rule also
+                # armed when a coasted prediction crossed the net several frames after a
+                # far-away miss, which turned ordinary detector gaps into false net hits.
+                last_seen = int(active["last_seen"])
+                net_y = frames_meta[last_seen].get("net_y_px")
+                if (net_y is not None
+                        and active.get("pending_terminal") != "out_of_frame"
+                        and last_seen == frame - 1):
+                    vy = float(previous_state[3])
+                    distance_to_net = float(net_y) - float(previous_position[1])
+                    approaching = distance_to_net * vy > 0.0
+                    frames_to_net = abs(distance_to_net) / max(abs(vy), 1e-6)
+                    if (abs(distance_to_net) <= net_band
+                            and approaching
+                            and frames_to_net <= 2.5
+                            and float(active["observations"][last_seen][2]) >= 0.50):
+                        active["net_candidate_frame"] = frame
+                        active["net_pending"] = 1
+                elif active.get("net_candidate_frame") is not None:
+                    active["net_pending"] = frame - int(active["net_candidate_frame"]) + 1
+
+                if active is not None and active.get("net_candidate_frame") is not None:
                     if active.get("net_pending", 0) >= net_grace:
                         # The grace window has already allowed a genuine crossing to
                         # reappear. Once it expires, a net contact is a hard terminal:

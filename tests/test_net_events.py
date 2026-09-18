@@ -30,3 +30,18 @@ def test_net_event_uses_last_trusted_x_and_confirmation_time():
             "outcome": "net",
         }
     ]
+
+
+def test_low_confidence_tracker_terminal_stays_internal_only():
+    frames = [
+        {
+            "ball_terminal_reason": "net_hit",
+            "ball_terminal_decision_frame": 10,
+            "world": (5.1, 11.2),
+            "ball_confidence": 0.27,
+        }
+    ]
+
+    assert collect_net_hits(
+        frames, [], fps=30.0, court_width=10.97, net_y=11.885
+    ) == []

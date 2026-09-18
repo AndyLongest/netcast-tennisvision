@@ -78,4 +78,10 @@ def test_offline_minimap_persists_beyond_the_yellow_flash() -> None:
     script = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
 
     assert "const confirmedEvents" in script
-    assert "const recentDecision = now - latest.t <= 1.15 ? latest : null" in script
+    assert "const recentDecision = latest && now - eventDecisionTime(latest) <= 1.15" in script
+    assert "const mapWidth = width * (50 / 640)" in script
+    assert "const left = width - mapWidth - mapMargin" in script
+    assert "if (!latest) return" not in script
+    assert "drawVideoBallAndTrail(ctx, width, height, now)" in script
+    assert "courtProjector(state.scene.court_image_corners" in script
+    assert "zoneBounds[recentDecision.zone]" in script

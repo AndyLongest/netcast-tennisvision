@@ -1176,6 +1176,71 @@ function drawRedCross(ctx, x, y, radius = 6) {
   ctx.restore();
 }
 
+function eventDecisionTime(event) {
+  const frame = Number(event?.decision_frame);
+  return Number.isFinite(frame) && state.scene?.fps
+    ? frame / state.scene.fps
+    : Number(event?.t || 0);
+}
+
+function courtProjector(corners, width, height) {
+  if (!Array.isArray(corners) || corners.length !== 4) return null;
+  const points = corners.map((point) => [Number(point[0]) * width, Number(point[1]) * height]);
+  if (points.some((point) => !point.every(Number.isFinite))) return null;
+  const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = points;
+  const dx1 = x1 - x2, dx2 = x3 - x2, dx3 = x0 - x1 + x2 - x3;
+  const dy1 = y1 - y2, dy2 = y3 - y2, dy3 = y0 - y1 + y2 - y3;
+  const determinant = dx1 * dy2 - dx2 * dy1;
+  let g = 0, h = 0;
+  if (Math.abs(determinant) > 1e-8) {
+    g = (dx3 * dy2 - dx2 * dy3) / determinant;
+    h = (dx1 * dy3 - dx3 * dy1) / determinant;
+  }
+  const a = x1 - x0 + g * x1, b = x3 - x0 + h * x3;
+  const d = y1 - y0 + g * y1, e = y3 - y0 + h * y3;
+  return (x, y) => {
+    const u = x / 10.97, v = y / 23.77, divisor = g * u + h * v + 1;
+    return [(a * u + b * v + x0) / divisor, (d * u + e * v + y0) / divisor];
+  };
+}
+
+function drawVideoBallAndTrail(ctx, width, height, now) {
+  if ($('#analysisVideo').closest('.video-shell').classList.contains('browser-corrected')) return;
+  const frames = state.scene?.frames || [];
+  if (!frames.length || !state.scene?.fps) return;
+  const frameIndex = Math.min(frames.length - 1, Math.max(0, Math.round(now * state.scene.fps)));
+  const current = frames[frameIndex];
+  if (!Array.isArray(current?.bp)) return;
+  let start = Math.max(0, frameIndex - Math.max(8, Math.round(0.84 * state.scene.fps)));
+  const contactFrames = [
+    ...(state.scene.bounces || []).map((event) => Number(event.frame)),
+    ...(state.scene.hits || []).map((event) => Number(event.frame)),
+    ...(state.scene.net_hits || []).map((event) => Number(event.frame)),
+  ].filter((frame) => Number.isFinite(frame) && frame <= frameIndex && frame >= start);
+  if (contactFrames.length) start = Math.max(start, Math.max(...contactFrames));
+  const trackId = current.k;
+  const trail = [];
+  for (let index = frameIndex; index >= start; index -= 1) {
+    const frame = frames[index];
+    if (!Array.isArray(frame?.dp) || (trackId != null && frame.k !== trackId)) break;
+    trail.push([frame.dp[0] * width, frame.dp[1] * height]);
+  }
+  trail.reverse();
+  if (trail.length > 1) {
+    ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (let index = 1; index < trail.length; index += 1) {
+      const alpha = 0.08 + 0.56 * index / (trail.length - 1);
+      ctx.strokeStyle = `rgba(218, 67, 255, ${alpha})`;
+      ctx.lineWidth = 1.2 + 1.6 * index / (trail.length - 1);
+      ctx.beginPath(); ctx.moveTo(...trail[index - 1]); ctx.lineTo(...trail[index]); ctx.stroke();
+    }
+    ctx.restore();
+  }
+  const x = current.bp[0] * width, y = current.bp[1] * height;
+  ctx.save(); ctx.fillStyle = '#ff4cef'; ctx.shadowColor = '#d83fff'; ctx.shadowBlur = 12;
+  ctx.beginPath(); ctx.arc(x, y, Math.max(3, width * 0.004), 0, Math.PI * 2); ctx.fill(); ctx.restore();
+}
+
 function drawEventOverlay() {
   const canvas = $('#eventOverlay');
   const { ctx, width, height } = sizeCanvas(canvas);
@@ -1186,49 +1251,61 @@ function drawEventOverlay() {
     ...state.scene.bounces.map((event) => ({ ...event, eventKind: 'bounce' })),
     ...(state.scene.net_hits || []).map((event) => ({ ...event, eventKind: 'net' })),
   ]
-    .filter((event) => event.t <= now)
-    .sort((a, b) => b.t - a.t);
+    .filter((event) => eventDecisionTime(event) <= now)
+    .sort((a, b) => eventDecisionTime(b) - eventDecisionTime(a));
   const latest = confirmedEvents[0];
-  if (!latest) return;
   // The current-rally minimap persists after touchdown. Only the yellow zone flash
   // expires; coupling both to the same 1.15-second window made the whole map vanish.
-  const recentDecision = now - latest.t <= 1.15 ? latest : null;
-  const mapWidth = Math.min(154, width * 0.25), mapHeight = mapWidth * 1.62;
-  const left = width - mapWidth - 18, top = height - mapHeight - 38;
+  const recentDecision = latest && now - eventDecisionTime(latest) <= 1.15 ? latest : null;
+  const zoneBounds = state.scene.zones || {};
+  const bounds = recentDecision?.eventKind === 'bounce'
+    ? zoneBounds[recentDecision.zone]
+    : null;
+  const projectCourt = courtProjector(state.scene.court_image_corners, width, height);
+  if (bounds && projectCourt && !$('#analysisVideo').closest('.video-shell').classList.contains('browser-corrected')) {
+    const polygon = [
+      projectCourt(bounds[0], bounds[1]), projectCourt(bounds[2], bounds[1]),
+      projectCourt(bounds[2], bounds[3]), projectCourt(bounds[0], bounds[3]),
+    ];
+    const age = Math.max(0, now - eventDecisionTime(recentDecision));
+    const alpha = age < 0.28 ? 0.46 : Math.max(0.16, 0.46 * (1 - (age - 0.28) / 0.87));
+    ctx.save(); ctx.fillStyle = `rgba(255, 226, 42, ${alpha})`; ctx.shadowColor = 'rgba(255,226,42,.7)'; ctx.shadowBlur = 12;
+    ctx.beginPath(); ctx.moveTo(...polygon[0]); polygon.slice(1).forEach((point) => ctx.lineTo(...point)); ctx.closePath(); ctx.fill(); ctx.restore();
+  }
+  drawVideoBallAndTrail(ctx, width, height, now);
+
+  // Match the original baked overlay exactly: 50px at the 640px tuning width,
+  // equal metres per pixel, six-pixel margin, fixed to the bottom-right corner.
+  const mapWidth = width * (50 / 640);
+  const mapHeight = mapWidth * ((23.77 + 5.0) / (10.97 + 3.0));
+  const mapMargin = width * (6 / 640);
+  const left = width - mapWidth - mapMargin, top = height - mapHeight - mapMargin;
   ctx.save();
-  ctx.fillStyle = 'rgba(9, 14, 13, .82)'; ctx.strokeStyle = 'rgba(255,255,255,.25)';
-  ctx.lineWidth = 1; ctx.beginPath(); ctx.roundRect(left, top, mapWidth, mapHeight, 10); ctx.fill(); ctx.stroke();
-  const pad = 14, x0 = left + pad, x1 = left + mapWidth - pad, y0 = top + pad, y1 = top + mapHeight - pad;
-  const px = (x) => x0 + (x / 10.97) * (x1 - x0);
-  const py = (y) => y1 - (y / 23.77) * (y1 - y0);
+  ctx.fillStyle = 'rgba(28, 28, 28, .82)'; ctx.strokeStyle = 'rgba(200,200,200,.9)';
+  ctx.lineWidth = 1; ctx.fillRect(left, top, mapWidth, mapHeight); ctx.strokeRect(left, top, mapWidth, mapHeight);
+  const pad = Math.max(3, mapWidth * 0.03);
+  const xMin = -1.5, xMax = 12.47, yMin = -2.5, yMax = 26.27;
+  const px = (x) => left + pad + ((x - xMin) / (xMax - xMin)) * (mapWidth - 2 * pad);
+  const py = (y) => top + pad + (1 - (y - yMin) / (yMax - yMin)) * (mapHeight - 2 * pad);
+  const x0 = px(0), x1 = px(10.97), y0 = py(23.77), y1 = py(0);
   ctx.strokeStyle = 'rgba(222,255,184,.9)'; ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
   ctx.beginPath(); ctx.moveTo(x0, py(11.885)); ctx.lineTo(x1, py(11.885));
   ctx.moveTo(x0, py(5.485)); ctx.lineTo(x1, py(5.485));
   ctx.moveTo(x0, py(18.285)); ctx.lineTo(x1, py(18.285));
+  ctx.moveTo(px(1.37), y0); ctx.lineTo(px(1.37), y1);
+  ctx.moveTo(px(9.60), y0); ctx.lineTo(px(9.60), y1);
   ctx.moveTo(px(5.485), py(5.485)); ctx.lineTo(px(5.485), py(18.285)); ctx.stroke();
-  const zoneBounds = {
-    'Far Backcourt': [1.37, 18.285, 9.60, 23.77],
-    'Near Backcourt': [1.37, 0, 9.60, 5.485],
-    'Far-Left Service Box': [1.37, 11.885, 5.485, 18.285],
-    'Far-Right Service Box': [5.485, 11.885, 9.60, 18.285],
-    'Near-Left Service Box': [1.37, 5.485, 5.485, 11.885],
-    'Near-Right Service Box': [5.485, 5.485, 9.60, 11.885],
-    'Left Doubles Alley': [0, 0, 1.37, 23.77],
-    'Right Doubles Alley': [9.60, 0, 10.97, 23.77],
-  };
-  const bounds = recentDecision?.eventKind === 'bounce'
-    ? zoneBounds[recentDecision.zone]
-    : null;
   if (bounds) {
     ctx.fillStyle = 'rgba(242, 232, 60, .36)';
     ctx.fillRect(px(bounds[0]), py(bounds[3]), px(bounds[2]) - px(bounds[0]), py(bounds[1]) - py(bounds[3]));
   }
   state.scene.bounces
-    .filter((bounce) => bounce.rally_id === latest.rally_id && bounce.t <= now)
+    .filter((bounce) => latest && bounce.rally_id === latest.rally_id && eventDecisionTime(bounce) <= now)
     .forEach((bounce) => {
-      const x = px(Math.max(0, Math.min(10.97, bounce.x)));
-      const y = py(Math.max(0, Math.min(23.77, bounce.y)));
       const lineCall = bounce.line_call || (bounce.zone === 'Out' ? 'out' : 'in');
+      const worldX = lineCall === 'out' ? Math.max(xMin, Math.min(xMax, bounce.x)) : bounce.x;
+      const worldY = lineCall === 'out' ? Math.max(yMin, Math.min(yMax, bounce.y)) : bounce.y;
+      const x = px(worldX), y = py(worldY);
       if (lineCall === 'out') {
         drawRedCross(ctx, x, y, 5);
       } else {
@@ -1238,7 +1315,7 @@ function drawEventOverlay() {
       }
     });
   (state.scene.net_hits || [])
-    .filter((event) => event.rally_id === latest.rally_id && event.t <= now)
+    .filter((event) => latest && event.rally_id === latest.rally_id && eventDecisionTime(event) <= now)
     .forEach((event) => drawRedCross(ctx, px(event.x), py(event.y), 5));
   ctx.restore();
 }

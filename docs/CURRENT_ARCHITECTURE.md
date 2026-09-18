@@ -261,7 +261,7 @@ Production cloud releases use `Dockerfile.release`: a thin code overlay on the a
 `production-v1` ML runtime. The legacy image stores frozen weights in
 `/opt/netcast/models`; the release maps that directory to the canonical `/app/models`
 path and refuses to publish unless the ball, bounce, player-segmentation and
-player-identity checkpoints are all present. The relay currently pins `production-v26`. Short PPIO control-plane TLS
+player-identity checkpoints are all present. The relay currently pins `production-v27`. Short PPIO control-plane TLS
 disconnects while an existing instance starts are retried until the startup deadline;
 instance creation itself is never blindly retried because that could allocate two GPUs.
 

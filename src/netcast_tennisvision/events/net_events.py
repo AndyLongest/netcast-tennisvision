@@ -28,6 +28,12 @@ def collect_net_hits(
     for frame, meta in enumerate(frames_meta):
         if meta.get("ball_terminal_reason") != "net_hit":
             continue
+        confidence = float(meta.get("ball_confidence", 0.0))
+        # A red cross is a product-level claim, not a tracker diagnostic. Low-confidence
+        # terminations remain available in frames_meta for audit, but are too ambiguous
+        # to interrupt the visible rally as a confirmed net contact.
+        if confidence < 0.50:
+            continue
         world = meta.get("world") or meta.get("world_ground")
         x = court_width / 2.0
         if world is not None and len(world) >= 1:
@@ -46,7 +52,7 @@ def collect_net_hits(
                 "y": round(float(net_y), 3),
                 "rally_id": preceding.get("rally_id") if preceding else None,
                 "player_id": preceding.get("player_id") if preceding else None,
-                "confidence": round(float(meta.get("ball_confidence", 0.0)), 2),
+                "confidence": round(confidence, 2),
                 "outcome": "net",
             }
         )

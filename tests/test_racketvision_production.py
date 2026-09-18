@@ -119,3 +119,12 @@ def test_landing_feedback_contract_is_preserved():
     assert 'b["decision_frame"] + k' in source
     assert 'b["rally_id"] == active_rally' in source
     assert 'if line_call.call == "out"' in source
+
+
+def test_browser_overlay_exports_exact_image_geometry() -> None:
+    notebook = json.loads((ROOT / "notebooks/tennis_detection.ipynb").read_text("utf-8"))
+    source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
+
+    assert '"court_image_corners": court_image_corners' in source
+    assert '"bp": normalized_screen_point(m.get("ball_px"))' in source
+    assert '"dp": normalized_screen_point(display_ball_pixels[i])' in source

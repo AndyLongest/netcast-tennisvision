@@ -19,7 +19,16 @@ to a named regression fixture rather than left in a generic output directory.
 
 In normal `event-overlay` output mode the browser always reads untouched `data/clip.mp4`.
 It optionally applies the saved perspective homography with WebGL, then draws confirmed
-current-rally landings and terminal net-hit crosses from `scene3d.json`. An `annotated_clip.mp4` or
-`corrected_clip.mp4` left from an older task is not part of the current result and is never
-selected by the UI. Those files are generated only by the explicit `annotated-video`
-rollback mode.
+current-rally landings and terminal net-hit crosses from `scene3d.json`. The same report
+also carries the normalized image-space geometry needed by the browser overlay:
+
+- `court_image_corners`: four court corners in world-quad order, normalized to the source frame;
+- `frames[].bp`: the exact normalized ball observation used for the purple marker;
+- `frames[].dp`: the normalized display trajectory point used for the short purple trail.
+
+Landing flashes and minimap points become visible only at each event's `decision_frame`,
+never at its retrospectively estimated touchdown frame. The minimap is a fixed-size
+bottom-right UI layer matching the original annotated renderer. An `annotated_clip.mp4`
+or `corrected_clip.mp4` left from an older task is not part of the current result and is
+never selected by the UI. Those files are generated only by the explicit
+`annotated-video` rollback mode.
