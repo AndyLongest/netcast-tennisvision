@@ -14,6 +14,22 @@ weights. Do not load the experiment or history archives unless the task needs th
 
 Do not ask the product owner to restate information already recorded in those files.
 
+## Five-minute orientation
+
+Before editing, answer these four questions from the repository itself:
+
+1. **Is this product behavior or an experiment?** Production behavior is defined only by
+   `docs/CURRENT_ARCHITECTURE.md`; files in `docs/experiments/` are evidence.
+2. **Who owns the value being changed?** Use `src/netcast_tennisvision/README.md` and do not
+   compensate for a defect by tuning a downstream layer.
+3. **Which regression protects it?** Use `tests/README.md` to find the narrow suite, then
+   run the complete handoff gate before transfer.
+4. **Is the browser involved?** Read `web/README.md`; visual overlays consume structured
+   results and must not silently reinterpret court coordinates or event timing.
+
+If any answer is unclear, improve the owning contract as part of the change. Do not add a
+second implementation merely to avoid understanding the maintained one.
+
 ## Production contract
 
 - Start the product with `run_ui.ps1`.

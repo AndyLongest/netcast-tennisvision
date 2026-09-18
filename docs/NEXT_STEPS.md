@@ -24,9 +24,9 @@ work unless a new regression demonstrates that the current frozen path is worse.
 3. Prioritize far-court touchdown recall without changing detector-backed ball anchors.
 4. Add confidence calibration so only genuinely uncertain court or landing results ask for
    user correction.
-5. Reconcile an uncached fresh `demo` run (28 bounces / 32 hits on 2026-09-16) with the
-   frozen validated asset (29 / 35). The output-mode branch occurs after scene export and
-   is not the cause; identify and freeze the upstream calibration/cache dependency.
+5. Expand the accepted contact-aware court-metric tracker regression beyond the bundled
+   demo. The frozen demo is now internally consistent at 27 bounces / 33 hits; do not
+   restore the superseded cache-dependent 29 / 35 generation.
 
 ## P2 — performance
 
@@ -41,7 +41,8 @@ work unless a new regression demonstrates that the current frozen path is worse.
 ## P3 — maintainability
 
 1. Move production orchestration out of notebook cell execution into a normal Python
-   module while keeping the notebook as a research/demo client.
+   module while keeping the notebook as a research/demo client. Preserve output parity one
+   pass at a time; do not rewrite the complete pipeline in one change.
 2. Version the `scene3d.json` schema and add migration tests before changing fields.
 3. Replace the single global job with an explicit job store only when multi-user or remote
    deployment becomes a real product requirement.

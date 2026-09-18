@@ -22,6 +22,10 @@ ESSENTIAL = (
     "docs/NEXT_STEPS.md",
     "docs/API_AND_SCHEMAS.md",
     "docs/PUBLICATION_CHECKLIST.md",
+    "web/README.md",
+    "tests/README.md",
+    "notebooks/README.md",
+    "tools/README.md",
     "assets/manifest.json",
     "assets/MODELS.md",
     "assets/demo/demo.mp4",
@@ -43,6 +47,7 @@ SECRET_PATTERN = re.compile(
 MARKDOWN_LINK_PATTERN = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
 TEXT_SUFFIXES = {".py", ".js", ".css", ".html", ".json", ".md", ".ps1", ".toml", ".yml", ".yaml"}
 EXCLUDED_PARTS = {".git", ".venv", "data", "models", "outputs", "__pycache__"}
+FORBIDDEN_TRACKED_PARTS = {"__pycache__", ".pytest_cache", ".ruff_cache"}
 
 
 class Audit:
@@ -102,8 +107,8 @@ def check_demo(audit: Audit) -> None:
     scene_path = ROOT / production["demo"]["outputs"]["scene"]["path"]
     scene = json.loads(scene_path.read_text(encoding="utf-8"))
     audit.require(len(scene["frames"]) == production["demo"]["frames"], "demo frame count matches manifest")
-    audit.require(len(scene["bounces"]) == production["demo"]["bounces"] == 29, "demo has frozen 29 bounces")
-    audit.require(len(scene["hits"]) == production["demo"]["hits"] == 35, "demo has frozen 35 hits")
+    audit.require(len(scene["bounces"]) == production["demo"]["bounces"] == 27, "demo has canonical 27 bounces")
+    audit.require(len(scene["hits"]) == production["demo"]["hits"] == 33, "demo has canonical 33 hits")
     audit.require(sha256(scene_path) == production["demo"]["outputs"]["scene"]["sha256"], "demo scene checksum matches manifest")
     compact = json.dumps(scene, ensure_ascii=False, separators=(",", ":"))
     expected_js = f"globalThis.TENNIS_DEMO_SCENE={compact};\n"
@@ -132,6 +137,52 @@ def git_output(*arguments: str) -> str:
     return completed.stdout.strip()
 
 
+def check_repository_layout(audit: Audit) -> None:
+    tracked = [Path(line) for line in git_output("ls-files").splitlines() if line]
+    polluted = sorted(
+        str(path)
+        for path in tracked
+        if FORBIDDEN_TRACKED_PARTS.intersection(path.parts) or path.suffix == ".pyc"
+    )
+    audit.require(
+        not polluted,
+        f"no generated Python caches are tracked ({', '.join(polluted) or 'clean'})",
+    )
+
+    production_import_violations: list[str] = []
+    for path in (ROOT / "src" / "netcast_tennisvision").rglob("*.py"):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if re.search(r"(?:from|import)\s+(?:tools|tests|notebooks)(?:\.|\s|$)", text):
+            production_import_violations.append(str(path.relative_to(ROOT)))
+    audit.require(
+        not production_import_violations,
+        "production package does not import tools, tests or notebooks "
+        f"({', '.join(production_import_violations) or 'clean'})",
+    )
+
+    audit.require(
+        not (ROOT / "scripts").exists(),
+        "no ambiguous scripts directory; operator entry points stay named in the root",
+    )
+
+    notebook = json.loads(
+        (ROOT / "notebooks" / "tennis_detection.ipynb").read_text(encoding="utf-8")
+    )
+    ids = {cell.get("id") for cell in notebook["cells"]}
+    source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
+    retired_ids = {"23c8fa62", "9fe84949", "e6a661f9"}
+    audit.require(
+        not retired_ids.intersection(ids)
+        and "class BallNet" not in source
+        and "ball_heatmap_" not in source,
+        "notebook contains only the frozen RacketVision candidate path",
+    )
+    audit.require(
+        {"a782a51e", "3aa72724"}.issubset(ids),
+        "runner-owned notebook cells retain stable identities",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["ci", "handoff", "public"], default="handoff")
@@ -147,6 +198,7 @@ def main() -> int:
         not root_modules,
         f"repository root contains no Python modules ({', '.join(root_modules) or 'clean'})",
     )
+    check_repository_layout(audit)
 
     files = source_files()
     secret_hits = [str(path.relative_to(ROOT)) for path in files if SECRET_PATTERN.search(path.read_text(encoding="utf-8", errors="ignore"))]

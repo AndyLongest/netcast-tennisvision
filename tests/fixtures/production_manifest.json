@@ -1,6 +1,6 @@
 {
   "version": "racketvision-production-v1",
-  "frozen_at": "2026-08-26",
+  "frozen_at": "2026-09-17",
   "input_policy": "any positive native fps; 29.97/30fps regression floor; no frame dropping or interpolation",
   "training_during_upload": false,
   "weights": {
@@ -21,21 +21,21 @@
     "source": "assets/demo/demo.mp4",
     "fps": 29.913892078071182,
     "frames": 1737,
-    "positioned_frames": 1220,
-    "bounces": 29,
-    "hits": 35,
+    "positioned_frames": 1268,
+    "bounces": 27,
+    "hits": 33,
     "outputs": {
       "video": {
         "path": "assets/demo/annotated_clip.mp4",
-        "sha256": "bbd936a2d6446efd1f4bfb88dd97ea7253b521997a660308b93be349176db4d1"
+        "sha256": "867c1c7424695908fd5fd50a196a0ed2bef20d35d00ad015b5b7e478a0975033"
       },
       "scene": {
         "path": "assets/demo/scene3d.json",
-        "sha256": "465312959b054691bf06decd07a1b16712e196982ab04cf18a8e61911e19ed49"
+        "sha256": "a1dd00ab86d9c944bdb87b2b6d638f695521bb8ec3f06ef85fdcd1532823ae2f"
       },
       "viewer": {
         "path": "assets/demo/rally3d.html",
-        "sha256": "1be92e4fde13250d009373f47cb3d65a83fbdfde9870936987873ef9e6f72dd8"
+        "sha256": "b81400168cdd81976a8bc4b59507f5fe5c6257d5df4d3bdbb6522c29ffb8a298"
       }
     }
   },

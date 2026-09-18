@@ -55,7 +55,7 @@ def main() -> int:
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         demo = manifest["demo"]
-        results.append(check("production manifest", demo["bounces"] == 29 and demo["hits"] == 35))
+        results.append(check("production manifest", demo["bounces"] == 27 and demo["hits"] == 33))
     except (OSError, KeyError, json.JSONDecodeError) as exc:
         results.append(check("production manifest", False, str(exc)))
 

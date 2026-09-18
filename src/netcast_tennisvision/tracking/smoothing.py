@@ -41,7 +41,11 @@ def build_segment(
     coast = 0
     last_confidence = 0.0
     inferred_spatial = max(1.0, float(np.sqrt(initial_covariance[0, 0]) / 2.0))
-    max_prediction_speed = 18.0 * inferred_spatial
+    # A 160-220 km/h shot beside a baseline camera can move far more than the previous
+    # 18-reference-pixel ceiling. Candidate association still enforces calibrated physical
+    # reachability; this cap only prevents the Kalman seed from being artificially slowed
+    # after three coherent high-speed observations.
+    max_prediction_speed = 45.0 * inferred_spatial
 
     def clamp_velocity(value: np.ndarray) -> np.ndarray:
         speed = float(np.linalg.norm(value[2:]))

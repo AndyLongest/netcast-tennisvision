@@ -887,7 +887,7 @@ class Handler(SimpleHTTPRequestHandler):
             else:
                 os.replace(temporary, clip)
             # The notebook's frozen cache key includes mtime. Restore a stable timestamp
-            # for identical bytes so revisiting a video cannot silently retrain BallNet.
+            # for identical bytes so revisiting a video reuses only deterministic inference.
             cache_mtime = stable_video_mtime(clip)
             os.utime(clip, (cache_mtime, cache_mtime))
             fingerprint = video_fingerprint(clip)

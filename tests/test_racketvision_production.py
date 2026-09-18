@@ -16,17 +16,17 @@ from netcast_tennisvision.vision.racketvision import _decode, _decode_candidates
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_training_decoder_retains_alternatives_without_changing_legacy_primary():
+def test_training_decoder_retains_alternatives_without_changing_public_primary():
     heatmap = np.zeros((40, 60), dtype=np.float32)
     heatmap[5:10, 8:14] = 0.72
-    heatmap[22:30, 35:45] = 0.61  # largest component remains the legacy winner
+    heatmap[22:30, 35:45] = 0.61  # largest component remains the public primary
 
-    legacy = _decode(heatmap, 0.5, 2.0, 3.0)
+    public_primary = _decode(heatmap, 0.5, 2.0, 3.0)
     candidates = _decode_candidates(
         heatmap, 0.5, 2.0, 3.0, max_candidates=8,
     )
 
-    assert candidates[0] == legacy
+    assert candidates[0] == public_primary
     assert len(candidates) == 2
     assert candidates[1][:2] == pytest.approx((22.0, 22.5))
 

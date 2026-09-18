@@ -35,6 +35,7 @@ from .geometry import (
 from .geometry import (
     pixel_to_world_local as _pixel_to_world_local,
 )
+from .geometry import plausible_ball_step as _plausible_ball_step
 from .smoothing import (
     build_segment as _build_segment,
 )
@@ -193,8 +194,10 @@ def track_ball_persistent(
                         anchor = np.asarray(anchor_value[:2], dtype=float)
                         if not _near_player(frames_meta[anchor_frame], anchor, spatial):
                             continue
-                        launch_speed = float(np.linalg.norm(point - anchor) / gap_from_hit)
-                        if launch_speed > 30.0 * spatial:
+                        if not _plausible_ball_step(
+                            frames_meta, anchor_frame, anchor, frame, point,
+                            fps=fps, spatial=spatial,
+                        ):
                             continue
                         seed = [
                             (anchor_frame, anchor, float(anchor_value[2])),
@@ -225,14 +228,19 @@ def track_ball_persistent(
                                   if len(obs_h) >= 2 else np.zeros(2))
                     expected = obs_h[-1][1] + velocity_h * gap
                     error = float(np.linalg.norm(point - expected))
-                    if error <= 12.0 * spatial:
+                    # The first two post-contact samples can straddle racket occlusion.
+                    # Permit a wider residual here only; the three-point direction and
+                    # calibrated speed checks below still have to certify the launch.
+                    if error <= 30.0 * spatial:
                         shadows.append({"obs": obs_h + [(frame, point, conf)],
                                         "score": hypothesis["score"] + conf
                                                  - error / max(hard_cap, 1.0)})
             shadows.sort(key=lambda h: (len(h["obs"]), h["score"]), reverse=True)
             active["launch_hypotheses"] = shadows[:10]
             launch = next((h for h in shadows if len(h["obs"]) >= 3
-                           and _launches_toward_opponent(frames_meta, h["obs"], spatial)), None)
+                           and _launches_toward_opponent(
+                               frames_meta, h["obs"], spatial, fps=fps
+                           )), None)
             if launch is not None:
                 launch_obs = launch["obs"][-3:]
                 for f_launch, p_launch, c_launch in launch_obs:
@@ -247,7 +255,10 @@ def track_ball_persistent(
                     design, launch_points, rcond=None
                 )[0]
                 speed_fit = float(np.linalg.norm(velocity_fit))
-                max_event_speed = 22.5 * spatial  # 45 px/frame on the 720p reference
+                # Racket contact is the one legitimate source of an abrupt, very fast
+                # direction change.  The launch has already passed the calibrated
+                # metre-space ceiling; keep enough image velocity for a near-camera serve.
+                max_event_speed = 55.0 * spatial
                 if speed_fit > max_event_speed:
                     velocity_fit *= max_event_speed / speed_fit
                 f1, p1, _ = launch_obs[-1]

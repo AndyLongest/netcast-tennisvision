@@ -1,10 +1,37 @@
 import json
+from pathlib import Path
 
 import pytest
 
 from netcast_tennisvision.pipeline import runner as pipeline_runner
 from netcast_tennisvision.pipeline import video_encoding
 from netcast_tennisvision.pipeline.video_encoding import raw_h264_output_args
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_notebook_has_one_frozen_ball_path_and_stable_runner_cells():
+    notebook = json.loads(
+        (ROOT / "notebooks" / "tennis_detection.ipynb").read_text(encoding="utf-8")
+    )
+    ids = {cell.get("id") for cell in notebook["cells"]}
+    source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
+
+    assert {"a782a51e", "3aa72724"} <= ids
+    assert not {"23c8fa62", "9fe84949", "e6a661f9"} & ids
+    assert "class BallNet" not in source
+    assert "ball_heatmap_" not in source
+    assert "def run_production_tracker" in source
+
+
+def test_notebook_progress_is_bound_to_stable_cell_ids():
+    assert pipeline_runner.progress_for("1551a712") == (
+        48,
+        "正在识别网球与球员，并复用固定球场标定",
+    )
+    assert pipeline_runner.progress_for("2b62675d")[0] == 70
+    assert pipeline_runner.progress_for("9338f9cf")[0] == 82
+    assert pipeline_runner.progress_for("1d6d5185")[0] == 96
 
 
 def test_status_write_retries_a_transient_windows_lock(tmp_path, monkeypatch):

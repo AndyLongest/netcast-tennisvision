@@ -126,18 +126,23 @@ def write_status(
             temporary.unlink(missing_ok=True)
 
 
-def progress_for(cell_index: int) -> tuple[int, str]:
-    if cell_index <= 8:
-        return 12, "正在识别球场并进行九线校准"
-    if cell_index <= 19:
+CELL_PROGRESS: dict[str, tuple[int, str]] = {
+    "2b62675d": (70, "正在建立连续球轨迹与物理状态"),
+    "9338f9cf": (82, "正在融合音频并判断击球与落地"),
+    "8733c21f": (90, "正在重建三维坐标与球的飞行高度"),
+    "4401fb3c": (90, "正在重建三维坐标与球的飞行高度"),
+    "72c069b4": (90, "正在重建三维坐标与球的飞行高度"),
+    "a782a51e": (90, "正在重建三维坐标与球的飞行高度"),
+    "1d6d5185": (96, "正在渲染真实标注视频与交互式三维报告"),
+}
+PASS_A_CELL_IDS = {"af5cd187", "19c8db1b", "1551a712"}
+
+
+def progress_for(cell_id: str) -> tuple[int, str]:
+    """Return stable progress from notebook cell identity, never mutable cell position."""
+    if cell_id in PASS_A_CELL_IDS:
         return 48, "正在识别网球与球员，并复用固定球场标定"
-    if cell_index <= 24:
-        return 70, "正在建立连续球轨迹与物理状态"
-    if cell_index <= 25:
-        return 82, "正在融合音频并判断击球与落地"
-    if cell_index <= 30:
-        return 90, "正在重建三维坐标与球的飞行高度"
-    return 96, "正在渲染真实标注视频与交互式三维报告"
+    return CELL_PROGRESS.get(cell_id, (12, "正在识别球场并进行九线校准"))
 
 
 def inference_progress(done: int, total: int) -> None:
@@ -261,16 +266,17 @@ def main() -> None:
     event_overlay_output = event_overlay_output_enabled()
     try:
         for index, cell in enumerate(notebook["cells"]):
-            # Cells 23-24 are the retired clip-trained BallNet. RacketVision now supplies
-            # the candidates; running both would let two detectors fight over one ball.
-            if cell.get("cell_type") != "code" or index in (23, 24, 36):
+            # Cell ids are stable when explanatory markdown is reorganized; numeric indexes
+            # are not. The final display-only cell would try to open a desktop player and is
+            # the only maintained code cell the headless runner skips.
+            if cell.get("cell_type") != "code" or cell.get("id") == "3aa72724":
                 continue
-            progress, stage = progress_for(index)
+            progress, stage = progress_for(str(cell.get("id") or ""))
             if not report_published:
                 write_status("running", progress, stage)
             source = "".join(cell.get("source", []))
             exec(compile(source, f"{NOTEBOOK.name}:cell-{index}", "exec"), namespace)
-            if index == 32:
+            if cell.get("id") == "a782a51e":
                 report_outputs = [
                     ROOT / "data" / "outputs" / "scene3d.json",
                     ROOT / "data" / "outputs" / "rally3d.html",

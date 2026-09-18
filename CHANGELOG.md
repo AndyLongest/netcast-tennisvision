@@ -13,6 +13,13 @@
 
 ## Unreleased — handoff preparation
 
+- Promoted the contact-aware, court-metric RacketVision tracker as the only production
+  ball path and removed the restorable legacy tracker history. The frozen demo now records
+  1268 positioned frames (1192 observed, 76 predicted), 27 bounces and 33 hits.
+- Added a five-minute Agent orientation, package/browser/notebook/test ownership maps and
+  repository hygiene gates so a context-free maintainer can locate the owner and nearest
+  regression before editing.
+
 - Turned the main-page analysis archive into a durable local history: completed reports
   can be reopened or deleted together with their isolated artifacts.
 - Added bounded parallel cloud upload/download, verified fixed-camera profile handoff and

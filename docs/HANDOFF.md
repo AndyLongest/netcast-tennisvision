@@ -82,8 +82,8 @@ code may not depend on its parent workspace.
 
 - Input regression floor: native 29.97/30fps; every positive native frame rate is accepted.
 - Frames are never dropped or interpolated.
-- Fixed demo: 1737 frames, 1220 positioned ball frames, 1123 detector anchors,
-  29 confirmed bounces and 35 racket hits.
+- Fixed demo: 1737 frames, 1268 positioned ball frames, 1192 detector anchors,
+  27 confirmed bounces and 33 racket hits.
 - Court calibration is performed once for a fixed camera and reused for every frame.
 - A yellow zone appears only after a confirmed in-court touchdown.
 - An out ball creates a red cross; the minimap contains only the current rally.
@@ -96,7 +96,7 @@ code may not depend on its parent workspace.
 |---|---|---|
 | Candidate generation | `vision/racketvision.py` | frozen public weight, no upload-time training |
 | Player identity | `vision/player_identity.py` | sparse OSNet-AIN embeddings, joint A/B assignment, three-sample side-change hysteresis |
-| Association and lifecycle | `tracking/world_tracker.py` | tracking owns ball observations |
+| Association and lifecycle | `tracking/world_tracker.py` | one contact-aware court-metric tracker owns ball observations; no old tracker fallback |
 | Smoothing and physics | `tracking/` | real detections remain hard anchors |
 | Contact classification | `events/contact_hypothesis.py`, `events/landing_event_detector.py` | hit and bounce compete; audio is timing-only |
 | Landing position | `events/landing_detector.py` | consumes trajectory, never edits it |

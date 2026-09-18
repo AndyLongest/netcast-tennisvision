@@ -427,7 +427,7 @@ class LiveExperimentSession:
                     command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
                 )
 
-            # BallNet immediately resizes to 512x288 and YOLO uses imgsz=640.  Decode
+            # RacketVision immediately resizes to 512x288 and YOLO uses imgsz=640. Decode
             # the transport stream once at 640x360 so the pipe carries 20.7 MB/s
             # instead of 82.9 MB/s at 30 fps, without reducing either model's actual
             # input resolution.

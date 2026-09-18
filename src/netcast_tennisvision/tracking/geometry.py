@@ -90,6 +90,7 @@ def launches_toward_opponent(
     frames_meta: list[dict[str, Any]],
     observations: list[tuple[int, np.ndarray, float]],
     spatial: float,
+    fps: float = 30.0,
 ) -> bool:
     """Certify a three-point outgoing flight born beside a player's racket reach."""
     if len(observations) < 3:
@@ -119,18 +120,69 @@ def launches_toward_opponent(
         if len(velocities) >= 2
         else 1.0
     )
+    physically_plausible = all(
+        plausible_ball_step(
+            frames_meta,
+            observations[index - 1][0], observations[index - 1][1],
+            observations[index][0], observations[index][1],
+            fps=fps, spatial=spatial,
+        )
+        for index in range(1, len(observations))
+    )
     return bool(
         toward * displacement[1] >= 2.0 * spatial
         and np.linalg.norm(displacement) >= 5.0 * spatial
         and np.mean([observation[2] for observation in observations]) >= 0.34
-        and max(speeds, default=0.0) <= 22.5 * spatial
-        and agreement >= 0.50
-        and (min(speeds) <= 1e-6 or max(speeds) / max(min(speeds), 1e-6) <= 2.5)
+        and physically_plausible
+        and agreement >= 0.42
+        # A near-baseline serve or groundstroke changes pixel scale very rapidly as it
+        # leaves the camera.  World-space plausibility above is authoritative when a
+        # court calibration exists; this ratio only rejects truly incoherent blobs.
+        and (min(speeds) <= 1e-6 or max(speeds) / max(min(speeds), 1e-6) <= 5.0)
         and (
             len(velocities) < 2
-            or np.linalg.norm(velocities[-1] - velocities[-2]) <= 12.0 * spatial
+            or np.linalg.norm(velocities[-1] - velocities[-2]) <= 50.0 * spatial
         )
     )
+
+
+def plausible_ball_step(
+    frames_meta: list[dict[str, Any]],
+    first_frame: int,
+    first_point: np.ndarray,
+    second_frame: int,
+    second_point: np.ndarray,
+    *,
+    fps: float,
+    spatial: float,
+    max_ground_speed_m_s: float = 90.0,
+) -> bool:
+    """Validate a fast step in court metres, falling back to perspective-safe pixels.
+
+    The ground projection is imperfect while the ball is airborne, so the ceiling is
+    intentionally above the fastest recorded tennis serves.  Its purpose is to reject a
+    teleport, not to estimate shot speed.  Unlike one global pixel threshold, it does not
+    punish a near-camera launch merely because perspective makes it cover many pixels.
+    """
+    gap = max(1, int(second_frame) - int(first_frame))
+    first_meta = frames_meta[int(first_frame)]
+    second_meta = frames_meta[int(second_frame)]
+    first_inverse = first_meta.get("M_inv")
+    second_inverse = second_meta.get("M_inv")
+    if first_inverse is not None and second_inverse is not None:
+        first_world = homography_point(
+            np.asarray(first_inverse, float), np.asarray(first_point, float)
+        )
+        second_world = homography_point(
+            np.asarray(second_inverse, float), np.asarray(second_point, float)
+        )
+        if first_world is not None and second_world is not None:
+            speed_m_s = float(np.linalg.norm(second_world - first_world)) * float(fps) / gap
+            # Height-to-ground projection can stretch a real airborne displacement, but
+            # values far beyond this ceiling cannot belong to one tennis ball.
+            return speed_m_s <= max_ground_speed_m_s
+    pixel_speed = float(np.linalg.norm(np.asarray(second_point) - np.asarray(first_point))) / gap
+    return pixel_speed <= 60.0 * spatial
 
 
 def camera_centre_from_homography(

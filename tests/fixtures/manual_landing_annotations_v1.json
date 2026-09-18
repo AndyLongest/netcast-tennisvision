@@ -4,7 +4,7 @@
   "video_fps_policy": 30,
   "coordinate_policy": "Times are approximate human review anchors, not frame-exact labels. Never replace them with model output.",
   "source": "client visual review, 2026-08-24",
-  "module_scope": "landing detection only; frozen ball tracking and main-view trail must not change",
+  "module_scope": "landing review downstream of the canonical tracker; tracker changes require re-auditing every window",
   "development_order": [
     "near-court landing detection",
     "far-court landing detection"

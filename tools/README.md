@@ -12,7 +12,7 @@ provides the logical grouping. Generated files belong under `outputs/evaluations
 | `install_assets.py` | Download/rebuild only manifest-listed models and verify SHA-256 |
 | `verify_install.py` | Audit Python, libraries, FFmpeg, models and the frozen manifest |
 | `release_check.py` | Run CI, handoff or public-publication repository gates |
-| `check_e2e_baseline.py` | Compare frozen demo outputs and the accepted runtime envelope |
+| `check_e2e_baseline.py` | Compare frozen demo semantics/runtime; `--strict-artifacts` also requires environment-specific bytes |
 | `build_demo_assets.py` | Regenerate `web/demo-scene.js` from the frozen demo report |
 | `quarantine_legacy_workspace.py` | Reversibly isolate legacy parent-workspace material |
 

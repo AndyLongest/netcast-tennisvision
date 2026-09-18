@@ -210,6 +210,34 @@ def test_player_proximity_allows_direction_reset_instead_of_straight_coast():
     assert diagnostics.player_hit_velocity_resets >= 1
 
 
+def test_high_speed_near_camera_launch_can_take_over_after_racket_contact():
+    """A real serve may exceed the ordinary flight pixel gate near the camera."""
+    observations = {
+        0: [_candidate(100, 100)],
+        1: [_candidate(100, 130)],
+        2: [_candidate(100, 160)],
+        3: [_candidate(105, 100)],
+        4: [_candidate(110, 50)],
+        5: [_candidate(115, 10)],
+    }
+    frames = _frames(6, observations)
+    for frame in frames:
+        frame["net_y_px"] = 90.0
+        frame["person_boxes"] = np.array([[80, 130, 120, 190]], dtype=float)
+    segments, diagnostics = track_ball_persistent(
+        frames,
+        fps=30.0,
+        spatial=1.0,
+        speed_scale=1.0,
+        frame_size=(640, 360),
+        hard_cap=180.0,
+        chi2_gate=0.5,
+    )
+    assert segments[0]["meas"][4] == (110.0, 50.0)
+    assert frames[4]["ball_motion_mode"] == "player_hit"
+    assert diagnostics.player_hit_velocity_resets >= 1
+
+
 def test_downward_ball_can_take_a_bounce_branch_and_reset_velocity():
     observations = {
         0: [_candidate(100, 10)], 1: [_candidate(100, 20)],

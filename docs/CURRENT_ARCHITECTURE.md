@@ -58,10 +58,19 @@ after correction and stays crisp.
 - Perspective-aware search and a Kalman gate associate reachable candidates.
 - A missed frame coasts with increasing uncertainty instead of deleting the ball.
 - Direction reversal requires player/racket evidence; bounce is a separate motion mode.
+- A near-player contact may open a three-observation outgoing-launch hypothesis. Its
+  displacement is validated in calibrated court metres with a generous tennis-speed
+  ceiling, rather than rejected by one uniform image-space radius. Only a certified
+  launch may initialize the high-speed post-contact state.
 - RTS smoothing and the monocular gravity model only repair short confirmed gaps. Raw
   detector coordinates remain available for audit.
 - A track ends only after uncertainty is exhausted, a supported net stop, or an outward
   edge exit.
+
+This contact-aware court-metric tracker is the only supported association path for both
+offline analysis and live inference. Earlier circular-search, image-speed-only and pure
+ballistic variants are summarized in `experiments/BALL_TRACKING_PATH.md`; none remains as
+a runtime fallback.
 
 ## Landing contract
 
@@ -90,11 +99,11 @@ after correction and stays crisp.
 | Counter | Current value |
 |---|---:|
 | Public-model candidate frames | 1301 |
-| Positioned trajectory frames | 1220 |
-| Detector-backed observations | 1123 |
-| Smoothed short-gap frames | 97 |
-| Confirmed bounces | 29 |
-| Racket hits | 35 |
+| Positioned trajectory frames | 1268 |
+| Detector-backed observations | 1192 |
+| Smoothed short-gap frames | 76 |
+| Confirmed bounces | 27 |
+| Racket hits | 33 |
 | Fixed calibration court-line error | 1.23px |
 
 These counters detect regressions; they are not manually labelled accuracy metrics.
@@ -168,17 +177,17 @@ segmentation, tracking and contact classification still execute at full frame ra
 legacy per-frame court fitter is opt-in through `TENNISVISION_FIXED_COURT=0` for explicit
 moving-camera diagnostics and is not the production default.
 
-On the fixed `demo.mp4` regression and RTX 3050 Ti, the accepted fixed-court path reduced
-end-to-end processing from 231.48s to 128.75s. It preserved 1220 positioned trajectory
-frames, 27 bounces and 31 racket hits. All touchdown times remained within 0.02s; median
-landing displacement was 0.05m and one landing 0.08m from an internal service line changed
-the displayed adjacent zone.
+The accepted fixed-court mechanism was originally isolated on the RTX 3050 Ti at 128.75s
+versus 231.48s for per-frame fitting. Those historical counters are preserved in
+`docs/experiments/QUASI_REALTIME_EXPERIMENT.md`; they are not a selectable production
+generation.
 
-The recall layer added afterwards leaves those 1220 main-trajectory frames unchanged. On
-the same regression it restores one coherent rejected-candidate fragment: a far-backcourt
-touchdown at 25.91s followed by the receiver's racket contact, producing 29 bounces and 35
+The current frozen demo uses the single contact-aware court-metric tracker and the
+physically supported rejected-fragment recall pass. It contains 1268 positioned frames,
+1192 detector-backed anchors, 76 short-gap predictions, 27 confirmed bounces and 33 racket
 hits. Three opposite-player contact intervals lacking physical ground evidence remain
-landing-free as possible volleys. Set `TENNISVISION_RALLY_RECOVERY=0` for an exact rollback.
+landing-free as possible volleys. There is no environment switch back to an earlier
+tracker or cache-dependent recall generation.
 
 ## In/out line-call policy
 
@@ -376,10 +385,9 @@ is `tools/benchmark_ball_backends.py`; its dependencies are not application depe
 Skipping baked replay composition is independent of those rejected inference changes.
 On local `demo`, event-overlay execution ended at 134.4s without rendering. On recorded
 cloud `deemo2`, the equivalent report boundary was 304.4s versus 497.8s complete: a
-projected 193.3s / 38.8% reduction in user-visible wait. A fresh local demo run produced
-28 bounces and 32 hits versus the checked-in 29/35 reference asset; because the branch
-occurs only after `scene3d.json` is written, this is a pre-existing fresh-run
-reproducibility discrepancy, not an output-mode accuracy change.
+projected 193.3s / 38.8% reduction in user-visible wait. The old cache-dependent demo
+discrepancy is retired; the shipped manifest and clean production route now share the
+1268/1192/76 trajectory counters and 27-bounce/33-hit event result.
 
 ### Uncached end-to-end timing
 

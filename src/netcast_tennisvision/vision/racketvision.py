@@ -175,7 +175,7 @@ def _decode_candidates(
     max_candidates: int = 1,
     alternative_threshold: float | None = None,
 ) -> list[tuple]:
-    """Decode distinct heatmap components without changing the legacy first choice.
+    """Decode distinct heatmap components while preserving the public primary choice.
 
     Match footage normally contains one relevant ball, so production historically kept
     only the largest connected component.  A training court can contain many stationary
@@ -217,8 +217,8 @@ def _decode_candidates(
             for contour in [primary, *remaining][:max(1, int(max_candidates))]
         ]
 
-    # Mark the legacy component explicitly.  Match-mode routing can then discard every
-    # low-threshold alternative and exactly reproduce the historical input, including a
+    # Mark the public-threshold component explicitly. Match-mode routing can then discard
+    # every low-threshold alternative and preserve the canonical input, including a
     # genuinely empty frame when no component crossed the public 0.5 threshold.
     if primary is not None:
         decoded.append((*decode_contour(primary), 1.0))

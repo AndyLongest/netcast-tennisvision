@@ -77,8 +77,8 @@ def test_production_manifest_matches_embedded_demo():
     )
     scene = json.loads((root / "assets/demo/scene3d.json").read_text(encoding="utf-8"))
     assert len(scene["frames"]) == manifest["demo"]["frames"]
-    assert len(scene["bounces"]) == manifest["demo"]["bounces"] == 29
-    assert len(scene["hits"]) == manifest["demo"]["hits"] == 35
+    assert len(scene["bounces"]) == manifest["demo"]["bounces"] == 27
+    assert len(scene["hits"]) == manifest["demo"]["hits"] == 33
     assert set(scene["player_identities"]) == {"A", "B"}
     assert all(event.get("player_id") in {"A", "B"} for event in scene["hits"])
     assert all(event.get("player_id") in {"A", "B"} for event in scene["bounces"])

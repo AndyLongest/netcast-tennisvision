@@ -71,12 +71,12 @@ RacketVision pipeline produces:
 
 | Metric | Result |
 |---|---:|
-| Frames with a ball position | 1220 / 1737 |
-| Detector-backed observations | 1123 |
-| Short occlusion predictions | 97 |
-| Mid-flight reverse spikes repaired | 4 |
-| Confirmed ground bounces | 29 |
-| Racket hits | 35 |
+| Frames with a ball position | 1268 / 1737 |
+| Detector-backed observations | 1192 |
+| Short occlusion predictions | 76 |
+| Mid-flight reverse spikes repaired | 2 |
+| Confirmed ground bounces | 27 |
+| Racket hits | 33 |
 
 These are pipeline regression counters, not independently labelled accuracy metrics.
 They prevent a refactor from silently losing observations but do not prove line-calling
@@ -133,6 +133,8 @@ candidate.
 - Real detections are hard anchors and remain available as `ball_px_raw`.
 - A mid-flight direction reversal requires racket/player evidence; a bounce is a separate
   motion mode.
+- A certified near-player launch is validated in court metres before it may initialize a
+  high-speed post-contact state; one uniform pixel-speed ceiling is not used.
 - Ballistic fitting must not participate in candidate acceptance until a separately
   validated multi-hypothesis tracker is available.
 - Yellow court highlighting starts only after a confirmed ground contact.
@@ -167,7 +169,9 @@ Tennis_Vision/
 ├── setup.ps1
 ├── src/netcast_tennisvision/
 │   ├── api/          # local HTTP service
+│   ├── cloud/        # on-demand GPU lifecycle and worker transport
 │   ├── pipeline/     # production orchestration
+│   ├── streaming/    # causal live analysis and result relay
 │   ├── vision/       # inference and court calibration
 │   ├── tracking/     # lifecycle, geometry, physics and smoothing
 │   └── events/       # contact, touchdown and tennis rules
@@ -182,6 +186,12 @@ Tennis_Vision/
 ├── outputs/         # experiments and benchmarks; ignored by git
 └── data/            # latest upload, regression fixtures and caches; ignored by git
 ```
+
+Every non-obvious directory has one navigation page: package ownership is in
+[`src/netcast_tennisvision/README.md`](src/netcast_tennisvision/README.md), browser files in
+[`web/README.md`](web/README.md), test selection in [`tests/README.md`](tests/README.md),
+notebook policy in [`notebooks/README.md`](notebooks/README.md), and developer scripts in
+[`tools/README.md`](tools/README.md).
 
 `Tennis_Vision/` is the complete project boundary. Production code must not read files from
 its parent or sibling directories. Moving or copying this folder is supported; recreate

@@ -9,14 +9,16 @@ Tennis_Vision/
 ├── src/netcast_tennisvision/
 │   ├── README.md     # close-to-code responsibility and dependency map
 │   ├── api/          # HTTP transport, upload lifecycle, resumable job state
+│   ├── cloud/        # ephemeral PPIO job lifecycle and trusted worker transport
 │   ├── pipeline/     # production orchestration and notebook execution
+│   ├── streaming/    # causal live session, event scheduling and ECS result relay
 │   ├── vision/       # frozen inference, court calibration, and player identity
 │   ├── tracking/     # ball lifecycle, geometry, physics and smoothing
 │   ├── events/       # contact classification, touchdown and tennis ordering
 │   └── paths.py      # the single repository-root resolver
 ├── web/              # browser product
-├── notebooks/        # maintained research/orchestration notebook
-├── tests/            # regression and contract tests
+├── notebooks/        # maintained orchestration notebook; see its README
+├── tests/            # regression and contract tests; see its README
 ├── tools/            # developer diagnostics; never imported by production code
 ├── assets/           # versioned demo and model manifest
 ├── docs/             # canonical contracts and documentation index
@@ -31,7 +33,8 @@ Tennis_Vision/
 ## Dependency direction
 
 ```text
-api -> pipeline -> vision -> tracking -> events -> rendered outputs
+offline: web -> api -> cloud? -> pipeline -> vision -> tracking -> events -> outputs
+live:    web -> api -> cloud -> streaming -> vision -> tracking -> events -> ECS relay
 ```
 
 The diagram describes orchestration order, not permission to mutate upstream results.
@@ -71,3 +74,13 @@ directories from a different checkout.
 The canonical documentation index is `docs/README.md`. Dated measurements go to
 `docs/experiments/`; historical algorithm generations go to `docs/history/`. Keep durable
 production rules in `docs/CURRENT_ARCHITECTURE.md` rather than duplicating them in a new file.
+
+## Repository hygiene
+
+- `scripts/` is not a supported location. Operator commands are the three named PowerShell
+  entry points in the root; Python developer commands belong in `tools/`.
+- Never version `__pycache__`, notebook output caches, uploaded video, model weights or
+  benchmark output.
+- A new top-level directory needs a durable owner and an entry in this document.
+- Prefer extending an existing owning module over introducing `*_v2`, `new_*`, `backup_*`
+  or parallel production paths.

@@ -6,6 +6,7 @@ not supported runtime modes. Current behavior is defined by
 
 | Report | Scope |
 |---|---|
+| [`BALL_TRACKING_PATH.md`](BALL_TRACKING_PATH.md) | Single consolidated ball-tracking evolution, accepted contact-aware route and limits |
 | [`UNCERTAINTY_AWARE_LINE_CALL_2026-09-16.md`](UNCERTAINTY_AWARE_LINE_CALL_2026-09-16.md) | ITF edge convention, homography uncertainty and three-state line calls |
 | [`REALTIME_LANDING_SIMULATION_2026-09-16.md`](REALTIME_LANDING_SIMULATION_2026-09-16.md) | Causal landing-display delay and native ball-throughput experiment |
 | [`EVENT_PRESERVING_BALL_SAMPLING_2026-09-16.md`](EVENT_PRESERVING_BALL_SAMPLING_2026-09-16.md) | Rejected adaptive-frame and grouped-output BallTrack trials |

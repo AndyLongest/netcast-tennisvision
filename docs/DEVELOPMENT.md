@@ -64,7 +64,7 @@ Event modules may read these fields but must not rewrite detection ownership or 
 | Court projection, camera pose, player/racket reach | `tracking/geometry.py` |
 | Kalman/RTS output and isolated zigzag cleanup | `tracking/smoothing.py` |
 | High-ball/occlusion physics | `tracking/ballistics.py` |
-| Purple history trail only | `tracking/trail_rendering.py` and `TRAIL_RENDER_MODE` |
+| Purple history trail only | `tracking/trail_rendering.py` and the Pass-B render cell |
 | Contact impulse scoring | `events/landing_event_detector.py` |
 | Hit-versus-bounce evidence fusion | `events/contact_hypothesis.py` |
 | Sub-frame touchdown location | `events/landing_detector.py` |
@@ -72,9 +72,9 @@ Event modules may read these fields but must not rewrite detection ownership or 
 | Tennis sequence audit | `events/bounce_sequence.py` |
 | UI only | `web/` and rendering cells; do not alter tracking evidence |
 
-The purple trail experiment is deliberately reversible. Set `TRAIL_RENDER_MODE` to
-`"legacy"` in the notebook configuration to restore the original renderer without
-removing code or changing any analysis output.
+The purple trail uses one display-only regularized renderer. It does not change analysis
+coordinates; visual alternatives belong in an isolated experiment, not a production
+runtime switch.
 
 ## 5. Safe change procedure
 
@@ -89,8 +89,14 @@ removing code or changing any analysis output.
 6. Reject a change that raises one metric by sacrificing detector-backed observations.
 7. Update `docs/CURRENT_ARCHITECTURE.md` and the reference mapping when behavior changes.
 
-Current frozen-demo regression: 1220 positioned frames and 1123 detector-backed
-observations on the 1737-frame sample, with 29 confirmed bounces and 35 racket hits.
+After a full run, use `tools/check_e2e_baseline.py --elapsed-seconds <seconds>`. The normal
+gate freezes trajectory/event counters and timestamps. Add `--strict-artifacts` only when
+the camera profile, player-crop environment and encoder are intentionally identical;
+fresh auto-calibration and video encoding can change bytes without changing those semantic
+results.
+
+Current frozen-demo regression: 1268 positioned frames and 1192 detector-backed
+observations on the 1737-frame sample, with 27 confirmed bounces and 33 racket hits.
 These are preservation counters, not independent accuracy claims.
 
 The optional quasi-realtime research path and its rejected A/B variants are documented

@@ -25,15 +25,20 @@ agents should start at `AGENTS.md`, then use this page instead of reading every 
 | On-demand PPIO deployment | [`PPIO_SERVERLESS.md`](PPIO_SERVERLESS.md) |
 | Model installation and provenance | [`../assets/MODELS.md`](../assets/MODELS.md) |
 | Publication/licensing blockers | [`PUBLICATION_CHECKLIST.md`](PUBLICATION_CHECKLIST.md) |
+| Browser file ownership | [`../web/README.md`](../web/README.md) |
+| Test and fixture selection | [`../tests/README.md`](../tests/README.md) |
+| Notebook boundary | [`../notebooks/README.md`](../notebooks/README.md) |
+| Developer command catalog | [`../tools/README.md`](../tools/README.md) |
 
 ## Evidence, not production alternatives
 
-- [`experiments/`](experiments/) contains dated benchmarks, rejected acceleration variants
-  and model evaluations. These explain decisions but do not define current behavior.
+- [`experiments/BALL_TRACKING_PATH.md`](experiments/BALL_TRACKING_PATH.md) is the single
+  ball-model evolution record: routes tried, trade-offs, the accepted route and its limits.
+- The remaining files in [`experiments/`](experiments/) cover deployment, acceleration,
+  identity and line-call measurements. They explain decisions but do not define runtime.
 - [`references/`](references/) maps external papers and open-source projects to adopted or
   rejected ideas.
-- [`history/`](history/) preserves retired algorithm generations and old regression records.
-  Never restore a historical path merely because it has a higher isolated counter.
+- [`history/`](history/) contains no executable or restorable ball-model generation.
 
 ## Documentation rule
 
