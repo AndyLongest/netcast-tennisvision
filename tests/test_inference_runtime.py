@@ -66,6 +66,15 @@ def test_sparse_person_inference_preserves_every_frame_and_reuses_keyframes():
     assert sum(person.calls) == 4
 
 
+def test_sparse_person_inference_honours_single_frame_batching():
+    person = FakeModel("p")
+    list(iter_sparse_person_detections(
+        FakeCapture(list(range(10))), person, device="cuda", batch_size=1,
+        person_kwargs={}, stride=4,
+    ))
+    assert person.calls == [1, 1, 1]
+
+
 def test_sparse_stride_one_matches_full_person_inference():
     person = FakeModel("p")
     output = list(iter_sparse_person_detections(

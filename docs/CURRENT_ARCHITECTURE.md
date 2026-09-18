@@ -160,14 +160,13 @@ Contact geometry retains the inferred number of active people on each side; this
 allows a coach plus two trainees to contribute racket evidence instead of discarding one
 trainee under the old one-player-per-half assumption.
 
-Training mode also selects a separate candidate/lifecycle policy without changing the
-validated singles or doubles path. RacketVision keeps the historical largest heatmap
-component at its public 0.5 threshold, plus at most seven spatially distinct alternatives
-down to 0.30. Long-lived fixed components form a loose-ball map and are removed before
-association. A training feed still needs three temporally reachable observations to be
-born, but its minimum image displacement is perspective-tolerant and a dead feed releases
-the active state after 0.45 seconds so the next ball can start. Match mode discards every
-alternative and retains its original birth, occlusion and fragment-join parameters.
+Every offline play mode now enters association with only the historical largest heatmap
+component at the public 0.5 threshold. Low-threshold alternatives remain available to
+research APIs but are not a production fallback. The whole-video fixed-component map was
+removed because separate rallies revisit the same image regions and were being erased.
+Training mode still uses its perspective-tolerant lifecycle: three reachable observations
+are required for birth and a dead feed releases after 0.45 seconds. Singles and doubles
+retain their longer match occlusion and fragment-join parameters.
 
 ## Fixed-camera court policy
 

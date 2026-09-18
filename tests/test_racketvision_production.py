@@ -65,6 +65,21 @@ def test_notebook_routes_candidates_from_racketvision():
     assert "ball_model = YOLO" not in source
 
 
+def test_notebook_freezes_the_accepted_2026_09_17_trajectory_inputs():
+    notebook = json.loads((ROOT / "notebooks/tennis_detection.ipynb").read_text("utf-8"))
+    source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
+    assert 'SEG_CONF = 0.25' in source
+    assert 'TENNISVISION_PERSON_IMGSZ", "640"' in source
+    assert 'TENNISVISION_PERSON_STRIDE", "4"' in source
+    assert 'TENNISVISION_PERSON_INTERPOLATE", "0"' in source
+    assert 'inference_batch = 1' in source
+    assert 'if len(c) < 6 or c[5] >= 0.5' in source
+    assert 'hard_cap=MATCH_HARD_CAP, play_mode=play_mode_result.mode' in source
+    assert 'confidence_bonus=CONF_BONUS' not in source
+    assert 'min_track_span=MIN_TRACK_SPAN, play_mode=' not in source
+    assert 'cKDTree(pts)' not in source
+
+
 def test_minimap_is_not_suppressed_when_court_fit_is_unavailable():
     notebook = json.loads((ROOT / "notebooks/tennis_detection.ipynb").read_text("utf-8"))
     render_cell = next(

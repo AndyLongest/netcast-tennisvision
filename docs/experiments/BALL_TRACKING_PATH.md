@@ -19,21 +19,27 @@ evidence, not an alternate runtime. Production has one implementation:
 ## Accepted production route
 
 1. RacketVision MS-TrackNetV3 runs as frozen pure inference at the native frame rate.
-2. Singles and doubles retain only the public 0.5 primary heatmap component. Weak
-   components remain restricted to the separately detected training mode.
-3. A ball is born only from a coherent multi-frame hypothesis. One bright point cannot
+2. The accepted offline path retains only the public 0.5 primary heatmap component in
+   every play mode. Low-threshold secondary components remain research evidence only.
+3. Player contact boxes are frozen to YOLO 640px / confidence 0.25 / stride 4, carrying
+   the previous keyframe box between inferences without interpolation.
+4. No whole-video spatial-density filter is applied. Separate rallies revisit the same
+   court region, so density accumulated across the clip erases real balls.
+5. A ball is born only from a coherent multi-frame hypothesis. One bright point cannot
    create a track.
-4. Ordinary flight remains constrained by Kalman uncertainty, recent direction and a
+   The accepted call keeps the tracker's default confidence bonus and 5px-at-640 minimum
+   birth span; report-layer constants must not override those defaults.
+6. Ordinary flight remains constrained by Kalman uncertainty, recent direction and a
    hard physical displacement budget.
-5. A candidate near a tracked player can open a racket-contact launch hypothesis. Three
+7. A candidate near a tracked player can open a racket-contact launch hypothesis. Three
    coherent outgoing observations must point toward the opponent.
-6. The launch step is checked through the fixed court homography in metres per second,
+8. The launch step is checked through the fixed court homography in metres per second,
    with a deliberately generous 90 m/s ceiling. The homography is a plausibility guard,
    not a claimed ball-speed measurement.
-7. Only after that launch is certified may the tracker accept the abrupt velocity change
+9. Only after that launch is certified may the tracker accept the abrupt velocity change
    and initialize a high-speed state. The smoother can then preserve that state through a
    short occlusion instead of dragging it back to the pre-contact path.
-8. Bounce, racket contact, net termination and outward frame exit remain distinct state
+10. Bounce, racket contact, net termination and outward frame exit remain distinct state
    transitions. A mid-flight reversal without event evidence is rejected.
 
 There is no runtime switch to the retired association rules. The same tracker is imported
@@ -41,10 +47,18 @@ by offline reports and the live worker.
 
 ## Acceptance evidence
 
-The five-minute 1920×1080, 30fps difficult clip contains 8,835 frames. With the conservative
-public candidate only, the accepted tracker produced 5,083 detector-backed observations and
-6,570 positioned frames. Manual review found the near-player outgoing flight substantially
-more continuous than the prior gate.
+The five-minute 1920×1080, 30fps difficult clip contains 8,835 frames. The accepted review
+produced exactly 5,083 detector-backed observations and 6,570 positioned frames, using the
+same `track_ball_persistent` parameters now called by the upload notebook. The broken
+whole-video static filter produced only 1,858/2,474 respectively and was removed rather
+than replaced by another report-only filter. Manual review found the near-player outgoing
+flight substantially more continuous than the prior gate.
+
+A fresh end-to-end replay on 2026-09-18 regenerated the frozen YOLO contact boxes and
+produced 5,093 detector-backed observations / 6,638 positioned frames (75%). The small
+fresh-inference delta is recorded rather than hidden; the candidate policy, contact cadence
+and tracker call signature are the accepted route, and the original accepted review video
+remains the visual reference.
 
 On the fixed 1,737-frame demo, the same conservative candidate policy produced 1,243
 detector-backed observations and 1,380 positioned screen frames in the focused tracker
@@ -75,7 +89,7 @@ timestamps; byte equality is a separate same-environment check.
 
 ## Change discipline
 
-Future work extends this one route. A proposed change must preserve the public candidate
+Future work extends this one route. A proposed change must preserve the primary-candidate
 policy, one-ball lifecycle and native-frame timeline; add a timestamp regression; run the
 complete demo and unit suite; and report detector-backed observations separately from
 predicted positions. Rejected variants are summarized above and must not return as hidden

@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-18 — restore accepted long-clip ball continuity
+
+- Froze the front-end upload analysis to the manually accepted 2026-09-17 trajectory path:
+  public 0.5 primary RacketVision component plus the contact-aware court-metric tracker.
+- Removed the whole-video spatial-density filter that erased real balls when separate
+  rallies revisited the same image region; no replacement report-only filter was added.
+- Restored the difficult 8,835-frame benchmark target to 5,083 detector observations and
+  6,570 positioned frames; a fresh end-to-end inference produced 5,093 / 6,638 (75%).
+  Live integration remains a separate follow-up.
+
 ## 2026-08-29 — self-contained repository boundary
 
 - Bundled the fixed source and annotated demo with the repository.

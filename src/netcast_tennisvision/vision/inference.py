@@ -211,8 +211,13 @@ def iter_sparse_person_detections(
         if previous_result is None and 0 not in key_offsets:
             key_offsets.insert(0, 0)
         keyframes = [frames[offset] for offset in key_offsets]
-        inferred = _predict_people(
-            keyframes, person_model, device=device, person_kwargs=person_kwargs)
+        # Respect the public batch-size contract for sparse inference too. This matters
+        # when reproducing a validated detector/NMS boundary with batch_size=1.
+        inferred = []
+        for start in range(0, len(keyframes), max(1, int(batch_size))):
+            inferred.extend(_predict_people(
+                keyframes[start:start + max(1, int(batch_size))], person_model,
+                device=device, person_kwargs=person_kwargs))
         by_offset = {offset: result for offset, (_frame, result)
                      in zip(key_offsets, inferred, strict=False)}
         for offset, frame in enumerate(frames):
