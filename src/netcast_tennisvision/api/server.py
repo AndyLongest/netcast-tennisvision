@@ -39,6 +39,8 @@ CALIBRATION_REQUEST = DATA / "court_calibration_request.json"
 CALIBRATION_RESPONSE = DATA / "court_calibration_response.json"
 UPLOADS = DATA / "uploads"
 HISTORY = DATA / "history"
+CACHE = DATA / "cache"
+OUTPUTS = DATA / "outputs"
 UPLOAD_CHUNK_SIZE = 8 * 1024**2
 MAX_VIDEO_SIZE = 4 * 1024**3
 job_lock = threading.Lock()
@@ -211,8 +213,70 @@ def analysis_history() -> list[dict[str, object]]:
     return sorted(records, key=lambda item: int(item.get("created_at") or 0), reverse=True)
 
 
+def _forget_video_identity(source: Path) -> None:
+    """Make a later upload a new cache generation for these exact video bytes."""
+    try:
+        identities = json.loads(VIDEO_IDENTITIES.read_text(encoding="utf-8"))
+        digest = file_sha256(source)
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(identities, dict) or digest not in identities:
+        return
+    identities.pop(digest, None)
+    write_json_atomic(VIDEO_IDENTITIES, identities)
+
+
+def _delete_video_caches(source: Path) -> None:
+    """Delete every production cache address reachable by one archived source."""
+    if not source.is_file() or not CACHE.is_dir():
+        return
+    stat = source.stat()
+    size, seconds = stat.st_size, int(stat.st_mtime)
+    for pattern in (f"passA_{size}_{seconds}_*.pkl", f"onsets_{size}_{seconds}.npy"):
+        for path in CACHE.glob(pattern):
+            if path.is_file() and path.parent.resolve() == CACHE.resolve():
+                path.unlink(missing_ok=True)
+
+    checkpoint = ROOT / "models" / "racketvision_balltrack_state_v1.pt"
+    if checkpoint.is_file():
+        from netcast_tennisvision.vision.racketvision import _cache_key
+
+        # Production has used these bounded decode/batch combinations. Remove their
+        # content-addressed detector files as well as the Pass-A wrapper above.
+        for batch_size in range(1, 9):
+            for max_candidates, alternative_threshold in ((1, None), (8, 0.30)):
+                key = _cache_key(
+                    source, checkpoint, 0.5, batch_size,
+                    max_candidates, alternative_threshold,
+                )
+                (CACHE / f"racketvision_{key}.pkl").unlink(missing_ok=True)
+
+
+def _clear_current_analysis(job_id: str, fingerprint: str) -> None:
+    """Remove resumable state and mutable outputs when they belong to this record."""
+    current = read_json(CURRENT_JOB)
+    if current.get("job_id") != job_id and current.get("video_fingerprint") != fingerprint:
+        return
+    current_source = DATA / "clip.mp4"
+    if current_source.is_file():
+        try:
+            if not fingerprint or video_fingerprint(current_source) == fingerprint:
+                current_source.unlink(missing_ok=True)
+        except OSError:
+            pass
+    if OUTPUTS.is_dir() and OUTPUTS.resolve().parent == DATA.resolve():
+        shutil.rmtree(OUTPUTS)
+    CURRENT_JOB.unlink(missing_ok=True)
+    for transient in (
+        CALIBRATION_REQUEST, CALIBRATION_RESPONSE,
+        DATA / "court_calibration_preview.jpg", LOG,
+    ):
+        transient.unlink(missing_ok=True)
+    write_json_atomic(STATUS, {"state": "idle", "progress": 0, "stage": "等待视频"})
+
+
 def delete_history_record(job_id: str) -> bool:
-    """Delete exactly one validated history directory and no current working assets."""
+    """Delete one record, its reusable inference state, and matching current report."""
     safe_id = _history_job_id(job_id)
     if safe_id is None:
         return False
@@ -220,9 +284,48 @@ def delete_history_record(job_id: str) -> bool:
         record_dir = HISTORY / safe_id
         if record_dir.parent.resolve() != HISTORY.resolve() or not record_dir.is_dir():
             return False
+        record = read_json(record_dir / "record.json")
+        source = record_dir / "source.mp4"
+        fingerprint = str(record.get("video_fingerprint") or "")
+        _delete_video_caches(source)
+        _forget_video_identity(source)
+        _clear_current_analysis(safe_id, fingerprint)
         shutil.rmtree(record_dir)
         (HISTORY / f".deleted-{safe_id}").write_text("deleted", encoding="utf-8")
     return True
+
+
+def clear_all_analysis_records() -> None:
+    """Clear user-visible history and every runtime artifact that can resume it."""
+    with history_lock, job_lock:
+        for folder in (HISTORY, CACHE, UPLOADS):
+            folder.mkdir(parents=True, exist_ok=True)
+            if folder.resolve().parent != DATA.resolve():
+                raise RuntimeError(f"unsafe analysis cleanup path: {folder}")
+            for child in folder.iterdir():
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink(missing_ok=True)
+
+        if OUTPUTS.exists():
+            if OUTPUTS.resolve().parent != DATA.resolve():
+                raise RuntimeError(f"unsafe analysis cleanup path: {OUTPUTS}")
+            shutil.rmtree(OUTPUTS)
+
+        for artifact in (
+            DATA / "clip.mp4",
+            CURRENT_JOB,
+            VIDEO_IDENTITIES,
+            LOG,
+            CALIBRATION_REQUEST,
+            CALIBRATION_RESPONSE,
+            DATA / "court_calibration_preview.jpg",
+        ):
+            if artifact.resolve().parent != DATA.resolve():
+                raise RuntimeError(f"unsafe analysis cleanup path: {artifact}")
+            artifact.unlink(missing_ok=True)
+        write_json_atomic(STATUS, {"state": "idle", "progress": 0, "stage": "等待视频"})
 
 
 def video_fingerprint(path: Path, sample_size: int = 256 * 1024) -> str:

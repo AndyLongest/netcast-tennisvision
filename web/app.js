@@ -1418,7 +1418,7 @@ async function openHistoryRecord(record) {
 
 async function deleteHistoryRecord(record, button) {
   const filename = record.filename || '这场比赛';
-  if (!window.confirm(`确定删除“${filename}”的分析记录吗？\n视频副本与复盘数据也会从本机清除。`)) return;
+  if (!window.confirm(`确定彻底删除“${filename}”吗？\n历史记录、视频副本、复盘数据和可复用分析缓存都会清除；下次上传将重新完整分析。`)) return;
   button.disabled = true;
   try {
     const response = await fetch(apiUrl(`/api/history/${encodeURIComponent(record.job_id)}`), {

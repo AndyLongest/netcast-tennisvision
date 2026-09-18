@@ -1,5 +1,6 @@
 import json
 import math
+import os
 
 from netcast_tennisvision.api import server
 from netcast_tennisvision.api.server import (
@@ -163,7 +164,102 @@ def test_completed_analysis_is_archived_and_can_be_deleted(tmp_path, monkeypatch
     assert server.analysis_history() == []
 
 
+def test_history_delete_removes_matching_resume_state_outputs_and_caches(
+    tmp_path, monkeypatch,
+):
+    data = tmp_path / "data"
+    history = data / "history"
+    cache = data / "cache"
+    outputs = data / "outputs"
+    record_dir = history / "history-job-2"
+    record_dir.mkdir(parents=True)
+    cache.mkdir()
+    outputs.mkdir()
+    source = record_dir / "source.mp4"
+    source.write_bytes(b"deleted-video")
+    os.utime(source, (1234567890, 1234567890))
+    fingerprint = server.video_fingerprint(source)
+    (record_dir / "record.json").write_text(json.dumps({
+        "job_id": "history-job-2", "video_fingerprint": fingerprint,
+    }), encoding="utf-8")
+    current_source = data / "clip.mp4"
+    current_source.write_bytes(source.read_bytes())
+    (outputs / "scene3d.json").write_text("{}", encoding="utf-8")
+    current_job = data / "current_job.json"
+    status = data / "job_status.json"
+    current_job.write_text(json.dumps({
+        "job_id": "history-job-2", "video_fingerprint": fingerprint,
+    }), encoding="utf-8")
+    status.write_text(json.dumps({"state": "complete"}), encoding="utf-8")
+    identities = data / "video_identities.json"
+    identities.write_text(json.dumps({server.file_sha256(source): 1234567890}), encoding="utf-8")
+    matching = cache / f"passA_{source.stat().st_size}_1234567890_test.pkl"
+    matching.write_bytes(b"cache")
+    unrelated = cache / "passA_99_1_other.pkl"
+    unrelated.write_bytes(b"keep")
+
+    monkeypatch.setattr(server, "DATA", data)
+    monkeypatch.setattr(server, "HISTORY", history)
+    monkeypatch.setattr(server, "CACHE", cache)
+    monkeypatch.setattr(server, "OUTPUTS", outputs)
+    monkeypatch.setattr(server, "CURRENT_JOB", current_job)
+    monkeypatch.setattr(server, "STATUS", status)
+    monkeypatch.setattr(server, "VIDEO_IDENTITIES", identities)
+    monkeypatch.setattr(server, "LOG", data / "pipeline.log")
+    monkeypatch.setattr(server, "CALIBRATION_REQUEST", data / "request.json")
+    monkeypatch.setattr(server, "CALIBRATION_RESPONSE", data / "response.json")
+
+    assert server.delete_history_record("history-job-2")
+    assert not record_dir.exists()
+    assert not current_source.exists()
+    assert not outputs.exists()
+    assert not current_job.exists()
+    assert not matching.exists()
+    assert unrelated.exists()
+    assert server.read_json(status)["state"] == "idle"
+    assert json.loads(identities.read_text(encoding="utf-8")) == {}
+
+
 def test_history_delete_rejects_path_traversal(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "HISTORY", tmp_path / "history")
 
     assert not server.delete_history_record("../outside")
+
+
+def test_clear_all_analysis_records_preserves_non_runtime_data(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    history = data / "history"
+    cache = data / "cache"
+    uploads = data / "uploads"
+    outputs = data / "outputs"
+    for folder in (history, cache, uploads, outputs):
+        folder.mkdir(parents=True)
+        (folder / "artifact.bin").write_bytes(b"runtime")
+    (data / "clip.mp4").write_bytes(b"video")
+    (data / "current_job.json").write_text("{}", encoding="utf-8")
+    (data / "video_identities.json").write_text("{}", encoding="utf-8")
+    (data / "camera_profiles.json").write_text("{\"keep\": true}", encoding="utf-8")
+
+    monkeypatch.setattr(server, "DATA", data)
+    monkeypatch.setattr(server, "HISTORY", history)
+    monkeypatch.setattr(server, "CACHE", cache)
+    monkeypatch.setattr(server, "UPLOADS", uploads)
+    monkeypatch.setattr(server, "OUTPUTS", outputs)
+    monkeypatch.setattr(server, "CURRENT_JOB", data / "current_job.json")
+    monkeypatch.setattr(server, "STATUS", data / "job_status.json")
+    monkeypatch.setattr(server, "VIDEO_IDENTITIES", data / "video_identities.json")
+    monkeypatch.setattr(server, "LOG", data / "pipeline.log")
+    monkeypatch.setattr(server, "CALIBRATION_REQUEST", data / "request.json")
+    monkeypatch.setattr(server, "CALIBRATION_RESPONSE", data / "response.json")
+
+    server.clear_all_analysis_records()
+
+    assert list(history.iterdir()) == []
+    assert list(cache.iterdir()) == []
+    assert list(uploads.iterdir()) == []
+    assert not outputs.exists()
+    assert not (data / "clip.mp4").exists()
+    assert not (data / "current_job.json").exists()
+    assert not (data / "video_identities.json").exists()
+    assert server.read_json(data / "job_status.json")["state"] == "idle"
+    assert json.loads((data / "camera_profiles.json").read_text(encoding="utf-8")) == {"keep": True}
