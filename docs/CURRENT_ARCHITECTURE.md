@@ -14,6 +14,13 @@ experiments are not runtime fallbacks.
   The normalized near-left, near-right, far-right and far-left points are validated on
   the relay and scaled to the actual stream dimensions by the worker. Uploaded live tests
   must not silently inherit Demo corners or a previous camera profile.
+- Manual four-corner confirmation (offline and live) checks only four finite points,
+  a strictly convex cyclic boundary and a nonsingular perspective mapping. It imposes
+  no screen-height, width, depth, area, spacing, far/near ratio, sideline ratio or
+  centre-drift thresholds. Near/far labels follow the user's click order, not screen
+  height. Coordinates outside the video frame are also allowed; live transport
+  still expresses coordinates relative to frame width and height.
+  Automatic court proposals retain their existing false-positive filters.
 
 ## One-way data flow
 

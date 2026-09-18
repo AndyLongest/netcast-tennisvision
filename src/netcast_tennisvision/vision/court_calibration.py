@@ -5,9 +5,8 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
 
+import cv2
 import numpy as np
-
-from .court_registration import validate_court_corners
 
 
 @dataclass(frozen=True)
@@ -72,9 +71,31 @@ def automatic_calibration_confidence(
 def validate_manual_calibration(
     corners: Sequence[Sequence[float]], image_shape: Sequence[int], world_quad: np.ndarray,
 ) -> np.ndarray:
-    """Validate user clicks ordered near-L, near-R, far-R, far-L."""
-    points = np.asarray(corners, dtype=np.float64)
-    check = validate_court_corners(points, image_shape, world_quad=world_quad)
-    if not check.valid:
-        raise ValueError("；".join(check.reasons))
+    """Validate mapping geometry only; manual clicks need no camera-view priors.
+
+    The user supplies near-L, near-R, far-R, far-L. Do not infer those semantic
+    labels from screen height, size, perspective ratio or camera alignment.
+    """
+    try:
+        points = np.asarray(corners, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("请标记四个有效的球场角点") from exc
+    if points.shape != (4, 2) or not np.isfinite(points).all():
+        raise ValueError("请标记四个有效的球场角点")
+
+    # Normalization avoids an image-resolution-dependent degeneracy threshold.
+    span = np.ptp(points, axis=0)
+    if np.any(span == 0):
+        raise ValueError("四个角点不能重合或共线")
+    normalized = (points - points.min(axis=0)) / span
+    edges = np.roll(normalized, -1, axis=0) - normalized
+    next_edges = np.roll(edges, -1, axis=0)
+    crosses = edges[:, 0] * next_edges[:, 1] - edges[:, 1] * next_edges[:, 0]
+    if not (np.all(crosses > 0) or np.all(crosses < 0)):
+        raise ValueError("请沿球场边界依次标点，四角不能重合、共线、交叉或凹陷")
+    homography = cv2.getPerspectiveTransform(
+        np.asarray(world_quad, np.float32), normalized.astype(np.float32),
+    )
+    if not np.isfinite(homography).all() or np.linalg.matrix_rank(homography) < 3:
+        raise ValueError("四个角点无法建立有效的透视映射，请重新标记")
     return points

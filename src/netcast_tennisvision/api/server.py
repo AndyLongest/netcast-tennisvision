@@ -445,10 +445,10 @@ def parse_live_court_corners(value: object) -> list[list[float]]:
             raise ValueError("每个球场角点必须包含横、纵两个坐标")
         normalized = [[float(point[0]), float(point[1])] for point in payload]
         if any(
-            not all(math.isfinite(coordinate) and 0 <= coordinate <= 1 for coordinate in point)
+            not all(math.isfinite(coordinate) for coordinate in point)
             for point in normalized
         ):
-            raise ValueError("球场角点超出了画面范围")
+            raise ValueError("球场角点必须是有限坐标")
         import numpy as np
 
         from netcast_tennisvision.vision.court_calibration import validate_manual_calibration
@@ -1314,9 +1314,8 @@ class Handler(SimpleHTTPRequestHandler):
                 if (
                     not math.isfinite(x)
                     or not math.isfinite(y)
-                    or not (0 <= x < width and 0 <= y < height)
                 ):
-                    raise ValueError("角点超出了画面范围")
+                    raise ValueError("球场角点必须是有限坐标")
                 normalized.append([x, y])
             import numpy as np
 

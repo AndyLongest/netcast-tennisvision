@@ -32,7 +32,7 @@ def test_live_court_confirmation_rejects_missing_or_malformed_points():
         [],
         [[0.2, 0.8], [0.8, 0.8], [0.65, 0.2]],
         [[0.2, 0.8, 1], [0.8, 0.8], [0.65, 0.2], [0.35, 0.2]],
-        [[-0.1, 0.8], [0.8, 0.8], [0.65, 0.2], [0.35, 0.2]],
+        [[float("nan"), 0.8], [0.8, 0.8], [0.65, 0.2], [0.35, 0.2]],
     ):
         try:
             parse_live_court_corners(corners)

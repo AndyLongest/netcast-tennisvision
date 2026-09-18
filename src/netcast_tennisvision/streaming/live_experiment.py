@@ -165,8 +165,6 @@ def _camera_corners(
         if (
             normalized.shape != (4, 2)
             or not np.isfinite(normalized).all()
-            or np.any(normalized < 0)
-            or np.any(normalized > 1)
         ):
             raise RuntimeError("实时实验收到的球场角点无效")
         return normalized * np.asarray([width, height], dtype=np.float32)
