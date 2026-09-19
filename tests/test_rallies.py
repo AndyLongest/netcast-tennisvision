@@ -27,3 +27,13 @@ def test_net_and_ball_collection_do_not_prolong_finished_point():
     assert len(rallies) == 2
     assert rallies[0]["end_frame"] == 25
     assert nets[0]["rally_id"] == 0
+
+
+def test_score_change_splits_edited_points_without_a_contact_gap():
+    hits = [{"kind": "hit", "frame": f} for f in (0, 30, 60, 90)]
+    bounces = [{"frame": f} for f in (15, 45, 75)]
+    rallies = assign_rallies(hits, bounces, [], fps=30, boundary_frames=[50])
+    assert len(rallies) == 2
+    assert rallies[0]["display_end_frame"] == 50
+    assert rallies[1]["start_frame"] == 50
+    assert hits[2]["rally_id"] == 1

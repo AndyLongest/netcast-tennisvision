@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 
-def assign_rallies(events, bounces, net_hits, *, fps, reset_seconds=2.0):
+def assign_rallies(events, bounces, net_hits, *, fps, reset_seconds=2.0, boundary_frames=()):
     """Assign shared IDs in place and return a replay timeline.
 
     Only confirmed landings participate: rejected bounce candidates and ball
@@ -14,10 +14,16 @@ def assign_rallies(events, bounces, net_hits, *, fps, reset_seconds=2.0):
     contacts += [(int(n["frame"]), "net", n) for n in net_hits]
     contacts.sort(key=lambda row: (row[0], row[1] != "hit"))
     rallies, current, previous, closed = [], None, None, False
+    boundaries = sorted(set(boundary_frames))
     for frame, kind, item in contacts:
         gap = previous is not None and frame - previous > fps * reset_seconds
-        if current is None or (kind == "hit" and (closed or gap)) or (gap and not closed):
-            current = {"rally_id": len(rallies), "start_frame": frame,
+        boundary = next((b for b in reversed(boundaries)
+                         if (previous if previous is not None else -1) < b <= frame
+                         and (current is None or b > current["start_frame"])), None)
+        if boundary is not None and current is not None:
+            current["end_reason"] = "scoreboard_change"
+        if current is None or boundary is not None or (kind == "hit" and (closed or gap)) or (gap and not closed):
+            current = {"rally_id": len(rallies), "start_frame": boundary if boundary is not None else frame,
                        "end_frame": frame, "end_reason": "inactivity"}
             rallies.append(current)
             closed = False
@@ -39,6 +45,9 @@ def assign_rallies(events, bounces, net_hits, *, fps, reset_seconds=2.0):
         rally["display_end_frame"] = rally["end_frame"] + round(fps * reset_seconds)
         if i + 1 < len(rallies):
             rally["display_end_frame"] = min(rally["display_end_frame"], rallies[i + 1]["start_frame"])
+        following_boundary = next((b for b in boundaries if b > rally["start_frame"]), None)
+        if following_boundary is not None:
+            rally["display_end_frame"] = min(rally["display_end_frame"], following_boundary)
     lookup = {b["frame"]: b["rally_id"] for b in bounces}
     for event in events:
         if event["kind"] == "bounce" and event["frame"] in lookup:

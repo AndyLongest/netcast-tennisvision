@@ -183,3 +183,5 @@ change must update `web/app.js`, the 3D exporter, frozen demo, manifest and test
   the minimap is composited. It cannot change tracking, contacts, landing coordinates or zones.
 
 Offline reports preserve decoder presentation timestamps in `frame_times` and contact `decision_t`. Browser frame selection uses this timeline, not only frame index divided by nominal fps. This preserves initial offsets and internal gaps without adding or interpolating ball observations.
+
+`scoreboard_boundaries` lists native frames where persistent score-panel changes provide additional point boundaries. Unsupported panel layouts produce an empty list.

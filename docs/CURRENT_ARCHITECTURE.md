@@ -246,9 +246,11 @@ not physical evidence of a landing.
 `events/rallies.py` assigns shared IDs after landing confirmation. Out/net/second-bounce
 outcomes close points; discarded candidates cannot bridge inactivity. The exported
 `rallies` timeline controls both the browser and baked minimap: the next hit clears old
-markers immediately, and dead time expires the preceding map after two seconds. This is
-contact-based segmentation, not a newly trained serve/scoreboard recognizer; missed or
-false hits can still require review.
+markers immediately, and dead time expires the preceding map after two seconds. For edited broadcasts, an optional visual score-panel detector also marks persistent
+numeric-column changes. It currently recognizes an opaque blue two-row panel at the
+lower left, excludes the speed badge/player names and requires 0.35 seconds of stable
+evidence. Unsupported layouts use contact segmentation; no OCR or new serve model is
+claimed. Missed/false contacts and unsupported score panels can still require review.
 
 ## Report delivery and video rendering
 
