@@ -1,7 +1,33 @@
 import cv2
 import numpy as np
 
-from netcast_tennisvision.vision.court_motion import ConfirmedCourtMotion, registered_video_courts
+from netcast_tennisvision.vision.court_motion import (
+    ConfirmedCourtMotion, PeriodicCourtMotion, registered_video_courts,
+)
+
+
+def test_five_minute_corrections_hold_geometry_without_per_frame_retry(monkeypatch):
+    calls = []
+    corners = np.array([[0, 9], [9, 9], [7, 1], [2, 1]], float)
+
+    def register(self, frame):
+        calls.append(frame)
+        return corners + [0, len(calls)], len(calls) != 2
+
+    monkeypatch.setattr(ConfirmedCourtMotion, "update", register)
+    motion = PeriodicCourtMotion(np.zeros((36, 64), np.uint8), corners)
+    first, _ = motion.update("start", .1)
+    for t in [.2, 10, 299.99, 300.09]:
+        held, ok = motion.update("skip", t)
+        np.testing.assert_array_equal(held, first)
+        assert ok
+    _, ok = motion.update("five minutes", 300.1)
+    assert not ok
+    for t in [301, 500, 600.09]:
+        _, ok = motion.update("skip failed retry", t)
+        assert not ok
+    motion.update("ten minutes", 600.1)
+    assert calls == ["start", "five minutes", "ten minutes"]
 
 
 def test_confirmed_corners_follow_reframing_without_accumulating_drift():

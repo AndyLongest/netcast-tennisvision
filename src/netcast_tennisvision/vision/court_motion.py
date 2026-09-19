@@ -7,6 +7,35 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+COURT_CORRECTION_INTERVAL_SECONDS = 300.0
+
+
+class PeriodicCourtMotion:
+    """Hold geometry causally between five-minute source-time corrections."""
+
+    def __init__(self, reference, corners, *, interval_seconds=COURT_CORRECTION_INTERVAL_SECONDS):
+        if not np.isfinite(interval_seconds) or interval_seconds <= 0:
+            raise ValueError("Court correction interval must be positive")
+        self.registration = ConfirmedCourtMotion(reference, corners)
+        self.interval_seconds = float(interval_seconds)
+        self.next_correction = None
+        self.previous_time = None
+        self.corners = np.asarray(corners, float).copy()
+        self.verified = False
+
+    def update(self, frame, source_time):
+        if not np.isfinite(source_time) or (
+            self.previous_time is not None and source_time < self.previous_time
+        ):
+            raise ValueError("Court correction requires increasing source timestamps")
+        self.previous_time = source_time
+        if self.next_correction is None or source_time >= self.next_correction:
+            self.corners, self.verified = self.registration.update(frame)
+            # Failed matches also wait: never turn a textureless frame into an
+            # expensive per-frame retry loop.
+            self.next_correction = source_time + self.interval_seconds
+        return self.corners.copy(), self.verified
+
 
 class ConfirmedCourtMotion:
     """Register each image to the original calibration; never accumulate drift."""
@@ -60,12 +89,13 @@ class ConfirmedCourtMotion:
         return self.previous.copy(), True
 
 
-def registered_video_courts(video, reference, corners, count, *, cache_dir=None):
-    """Return geometry per native frame, independently of ball observations."""
+def registered_video_courts(video, reference, corners, count, *, cache_dir=None,
+                            interval_seconds=COURT_CORRECTION_INTERVAL_SECONDS):
+    """Keep every native PTS; perform full registration only at scheduled times."""
     cache = None
     if cache_dir is not None:
         path = Path(video)
-        identity = f"{path.resolve()}:{path.stat().st_size}:{path.stat().st_mtime_ns}:{count}:v2"
+        identity = f"{path.resolve()}:{path.stat().st_size}:{path.stat().st_mtime_ns}:{count}:v3:{interval_seconds}"
         signature = hashlib.sha256(identity.encode() + reference.tobytes()
                                    + np.asarray(corners, float).tobytes()).hexdigest()[:24]
         cache = Path(cache_dir) / f"court_motion_{signature}.npz"
@@ -78,7 +108,7 @@ def registered_video_courts(video, reference, corners, count, *, cache_dir=None)
                     return q, valid, times
             except (OSError, ValueError, KeyError):
                 pass
-    registration = ConfirmedCourtMotion(reference, corners)
+    registration = PeriodicCourtMotion(reference, corners, interval_seconds=interval_seconds)
     capture = cv2.VideoCapture(str(video))
     result, valid, times = [], [], []
     try:
@@ -86,10 +116,11 @@ def registered_video_courts(video, reference, corners, count, *, cache_dir=None)
             ok, frame = capture.read()
             if not ok:
                 raise RuntimeError("球场画面对齐未能读取完整视频")
-            q, matched = registration.update(frame)
+            source_time = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000
+            q, matched = registration.update(frame, source_time)
             result.append(q)
             valid.append(matched)
-            times.append(capture.get(cv2.CAP_PROP_POS_MSEC) / 1000)
+            times.append(source_time)
     finally:
         capture.release()
     result, valid, times = np.asarray(result), np.asarray(valid, bool), np.asarray(times)

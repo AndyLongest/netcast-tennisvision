@@ -225,12 +225,17 @@ sample is shown. This prevents a black intro or fade-in from producing an unusab
 canvas.
 
 For a fixed-camera job, the accepted automatic or manual quadrilateral remains the
-reference. `vision/court_motion.py` registers native frames to that reference using
+reference. `vision/court_motion.py` registers the first native frame and then once
+every 300 seconds of source time (offline and live) to that reference using
 spatially distributed ORB/RANSAC matches, excluding fixed broadcast graphics. A measured
 reframing carries the same confirmed corners into the current image; it never refits or
 snaps the user's corners to other court lines. An unchanged view preserves exact reference
 coordinates; insufficient matches retain the last geometry and are recorded as unverified.
-Registration is cached against the video identity, reference image and exact corners.
+Between corrections the last geometry and verification state are reused causally;
+failed matches also wait 300 seconds before retrying. Camera movement can therefore
+leave overlays misaligned until the next correction, as selected by the user. All
+ball frames and native presentation timestamps are still retained. Registration is
+cached against the video identity, reference image, exact corners and interval.
 Per-frame paint contrast cannot revoke manual geometry or suppress tracking. Pass-A also
 includes the rounded calibration in its cache signature.
 

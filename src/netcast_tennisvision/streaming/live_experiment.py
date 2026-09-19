@@ -35,6 +35,7 @@ from netcast_tennisvision.paths import REPOSITORY_ROOT
 from netcast_tennisvision.streaming.result_relay import ResultRelayPublisher
 from netcast_tennisvision.tracking.geometry import inside_player_body
 from netcast_tennisvision.tracking.world_tracker import track_ball_persistent
+from netcast_tennisvision.vision.court_motion import PeriodicCourtMotion
 from netcast_tennisvision.vision.player_identity import (
     PLAYER_COLORS_RGB,
     crop_player,
@@ -545,6 +546,7 @@ class LiveExperimentSession:
                 producer_started = time.time() - len(prefetched_frames) / max(fps, 1e-9)
 
             corners = _camera_corners(width, height, self.court_corners)
+            court_motion = PeriodicCourtMotion(first_frame, corners)
             image_to_world = cv2.getPerspectiveTransform(corners, WORLD_CORNERS)
             world_to_image = np.linalg.inv(image_to_world)
             net_point = cv2.perspectiveTransform(
@@ -589,6 +591,7 @@ class LiveExperimentSession:
 
             def process_batch() -> None:
                 nonlocal last_event_frame, rally_id, last_person_boxes
+                nonlocal corners, image_to_world, world_to_image, net_point
                 if not pending_inputs:
                     return
                 inputs = torch.from_numpy(np.stack(pending_inputs)).to(device, non_blocking=True)
@@ -648,8 +651,19 @@ class LiveExperimentSession:
                             "source_frame": len(frames_meta),
                             "dropped_before_inference": True,
                         })
+                    updated_corners, court_verified = court_motion.update(
+                        pending_frames[offset], source_index / fps)
+                    if not np.array_equal(updated_corners, corners):
+                        corners = updated_corners.astype(np.float32)
+                        image_to_world = cv2.getPerspectiveTransform(corners, WORLD_CORNERS)
+                        world_to_image = np.linalg.inv(image_to_world)
+                        net_point = cv2.perspectiveTransform(
+                            np.asarray([[[COURT_WIDTH_M / 2, COURT_LENGTH_M / 2]]], np.float32),
+                            world_to_image.astype(np.float32),
+                        )[0, 0]
                     frames_meta.append({
                         "candidates": candidates,
+                        "court_alignment_verified": court_verified,
                         # A fixed-camera player cannot teleport between adjacent frames.
                         # Hold the latest native-frame detection causally; do not
                         # interpolate future evidence or alter any ball input frame.

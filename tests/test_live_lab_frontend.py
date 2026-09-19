@@ -123,5 +123,5 @@ def test_offline_minimap_persists_beyond_the_yellow_flash() -> None:
 def test_completed_report_reuse_is_algorithm_versioned() -> None:
     script = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
 
-    assert "const ANALYSIS_VERSION = 'production-v29'" in script
+    assert "const ANALYSIS_VERSION = 'production-v30'" in script
     assert "current.algorithm_version === ANALYSIS_VERSION" in script
