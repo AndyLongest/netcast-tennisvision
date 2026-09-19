@@ -58,7 +58,7 @@ class PPIOJobManager:
         self.shared_secret = os.environ.get("TENNISVISION_CLOUD_TOKEN", "").strip()
         self.image = os.environ.get(
             "TENNISVISION_PPIO_IMAGE",
-            "image.ppinfra.com/prod-ahskpcitxxwcgdnfqfpu/netcast-tennisvision:production-v27",
+            "image.ppinfra.com/prod-ahskpcitxxwcgdnfqfpu/netcast-tennisvision:production-v29",
         ).strip()
         self.product_id = os.environ.get("TENNISVISION_PPIO_PRODUCT_ID", "L40S.22c125g")
         self.cluster_id = os.environ.get("TENNISVISION_PPIO_CLUSTER_ID", "cn-south-1")
@@ -420,6 +420,11 @@ class PPIOJobManager:
                 raise CloudLifecycleError("无法读取云端分析进度")
             state = str(remote.get("state", ""))
             remote["execution_target"] = "cloud-on-demand"
+            # The deployed image identifies the algorithm actually executed.
+            # A code-overlay image can inherit an older API metadata constant.
+            image_version = self.image.rsplit(":", 1)[-1]
+            if re.fullmatch(r"production-v\d+", image_version):
+                remote["algorithm_version"] = image_version
             if state == "needs_court_calibration":
                 self._download_path(
                     remote_url,

@@ -124,7 +124,7 @@ def test_video_fingerprint_uses_content_and_size(tmp_path):
 
 
 def test_analysis_version_matches_the_cloud_release():
-    assert server.ANALYSIS_VERSION == "production-v27"
+    assert server.ANALYSIS_VERSION == "production-v29"
 
 
 def test_completed_analysis_is_archived_and_can_be_deleted(tmp_path, monkeypatch):

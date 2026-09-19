@@ -30,6 +30,18 @@ def test_instance_id_can_be_read_from_nested_provider_response(tmp_path, monkeyp
     assert lifecycle._find_string({"data": {"instanceId": "gpu-123"}}, ("instanceId", "id")) == "gpu-123"
 
 
+def test_mirrored_version_comes_from_deployed_image(tmp_path, monkeypatch):
+    lifecycle = manager(tmp_path, monkeypatch)
+    lifecycle.image = "registry/example:production-v29"
+    monkeypatch.setattr(lifecycle, "_remote_request", lambda *_: (
+        200, {"state": "complete", "algorithm_version": "production-v27"}))
+    monkeypatch.setattr(lifecycle, "_download_report", lambda *_: None)
+    monkeypatch.setattr(lifecycle, "_download_outputs", lambda *_, **__: None)
+    monkeypatch.setattr(lifecycle, "_download_path", lambda *_, **__: None)
+    lifecycle._mirror_until_complete("https://worker.example")
+    assert lifecycle._read_json(lifecycle.status_path)["algorithm_version"] == "production-v29"
+
+
 def test_worker_releases_instance_after_analysis_failure(tmp_path, monkeypatch):
     lifecycle = manager(tmp_path, monkeypatch)
     clip = tmp_path / "clip.mp4"

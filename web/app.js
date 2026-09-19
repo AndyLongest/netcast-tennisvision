@@ -45,7 +45,7 @@ const STAGE_MESSAGES = [
   [92, '正在生成可视化报告…', '整理回放、落点地图与三维场景'],
 ];
 const ACTIVE_BACKEND_STATES = new Set(['queued', 'running', 'needs_court_calibration', 'report_ready']);
-const ANALYSIS_VERSION = 'production-v27';
+const ANALYSIS_VERSION = 'production-v29';
 
 let state = {
   isDemo: true, generated: true, name: '真实比赛样例', duration: 0,
