@@ -305,6 +305,19 @@ function syncRouteFlow(payload) {
   byId('flowAnalysis').textContent = `${Number(payload.event_cursor) || 0} 个落点 · ${backlog.toFixed(2)} 秒积压`;
 }
 
+function liveCalibrationPoint(clientX, clientY, rect, imageWidth, imageHeight) {
+  // object-fit: contain centres the image inside the CSS canvas box. Pointer
+  // coordinates must exclude that letterboxing before becoming video coordinates.
+  const scale = Math.min(rect.width / imageWidth, rect.height / imageHeight);
+  if (!(scale > 0)) return null;
+  const width = imageWidth * scale, height = imageHeight * scale;
+  const left = rect.left + (rect.width - width) / 2;
+  const top = rect.top + (rect.height - height) / 2;
+  const x = (clientX - left) / width, y = (clientY - top) / height;
+  if (x < 0 || x > 1 || y < 0 || y > 1) return null;
+  return [x, y];
+}
+
 function redrawLiveCalibration() {
   const canvas = byId('liveCalibrationCanvas');
   const video = byId('liveCalibrationVideo');
@@ -616,11 +629,12 @@ byId('liveUploadInput').addEventListener('change', (event) => {
 });
 byId('liveCalibrationCanvas').addEventListener('click', (event) => {
   if (!state.calibration.frameReady || state.calibration.points.length >= 4) return;
-  const rect = event.currentTarget.getBoundingClientRect();
-  state.calibration.points.push([
-    Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
-    Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
-  ]);
+  const canvas = event.currentTarget;
+  const point = liveCalibrationPoint(
+    event.clientX, event.clientY, canvas.getBoundingClientRect(), canvas.width, canvas.height,
+  );
+  if (!point) return;
+  state.calibration.points.push(point);
   const labels = ['近端左角', '近端右角', '远端右角', '远端左角'];
   const count = state.calibration.points.length;
   byId('liveCalibrationStep').textContent = count === 4

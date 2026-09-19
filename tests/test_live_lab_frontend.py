@@ -1,8 +1,41 @@
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_live_calibration_clicks_follow_contained_image() -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node is required for browser coordinate regression")
+    script = (ROOT / "web" / "live-lab.js").read_text(encoding="utf-8")
+    start = script.index("function liveCalibrationPoint(")
+    end = script.index("\n}", start) + 2
+    checks = r"""
+const assert = require('node:assert/strict');
+function check(actual, expected) {
+  assert.ok(actual);
+  actual.forEach((value, i) => assert.ok(Math.abs(value - expected[i]) < 1e-10));
+}
+// Wide but height-limited dialog: image occupies x=250..850, not x=50..1050.
+const wide = {left: 50, top: 100, width: 1000, height: 337.5};
+check(liveCalibrationPoint(310, 370, wide, 1280, 720), [0.1, 0.8]);
+check(liveCalibrationPoint(250, 100, wide, 1280, 720), [0, 0]);
+assert.equal(liveCalibrationPoint(100, 200, wide, 1280, 720), null);
+// Tall box: ignore top/bottom bars rather than clamping them to court corners.
+const tall = {left: 20, top: 40, width: 400, height: 500};
+check(liveCalibrationPoint(120, 357.5, tall, 1920, 1080), [0.25, 0.8]);
+assert.equal(liveCalibrationPoint(120, 50, tall, 1920, 1080), null);
+// Resizing keeps the same normalized point without introducing any snapping.
+check(liveCalibrationPoint(60, 220, {left:20, top:40, width:400, height:225}, 1280,720), [0.1,0.8]);
+assert.equal(liveCalibrationPoint(0,0,{left:0,top:0,width:0,height:0},1280,720), null);
+"""
+    subprocess.run([node, "-e", script[start:end] + checks], check=True, capture_output=True, text=True)
 
 
 def test_live_lab_assets_and_entrypoint_are_wired() -> None:
@@ -83,7 +116,7 @@ def test_offline_minimap_persists_beyond_the_yellow_flash() -> None:
     assert "const left = width - mapWidth - mapMargin" in script
     assert "if (!latest) return" not in script
     assert "drawVideoBallAndTrail(ctx, width, height, now)" in script
-    assert "courtProjector(state.scene.court_image_corners" in script
+    assert "courtProjector(courtCornersAt(state.scene, now)" in script
     assert "zoneBounds[recentDecision.zone]" in script
 
 

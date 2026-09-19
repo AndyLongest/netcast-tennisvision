@@ -43,3 +43,27 @@ def test_other_track_is_not_used_as_future_evidence():
         frames[index]["ball_track_id"] = 4
     result = estimate_landing_subframe(5, frames, radius=4)
     assert result["confidence"] == "frame"
+
+
+def test_delayed_candidate_recovers_true_contact_without_moving_track():
+    import copy
+    points = [(20 + 3*t, 50 + 4*t + .08*t*t - 9*max(t-8.4, 0)) for t in range(20)]
+    frames = _track(points)
+    original = copy.deepcopy(frames)
+    result = estimate_landing_subframe(10, frames, radius=8)
+    assert abs(result["frame_f"] - 8.4) < .15
+    assert result["impulse_bic_gain"] > 10
+    assert frames == original
+
+
+def test_camera_translation_does_not_change_inferred_contact():
+    import numpy as np
+    points = [(20 + 3*t, 50 + 4*t + .08*t*t - 9*max(t-8.4, 0)) for t in range(20)]
+    frames = _track(points)
+    for i, meta in enumerate(frames):
+        shift = 32 if i >= 9 else 0
+        meta["M"] = np.asarray([[1, 0, 0], [0, 1, shift], [0, 0, 1]], float)
+        meta["M_inv"] = np.linalg.inv(meta["M"])
+        meta["ball_px"] = (points[i][0], points[i][1] + shift)
+    result = estimate_landing_subframe(10, frames, radius=8)
+    assert abs(result["frame_f"] - 8.4) < .15

@@ -21,6 +21,8 @@
 开始 Demo 或上传其他素材后，页面必须先弹出球场确认层。用户按“近端左、近端右、
 远端右、远端左”的顺序点选四个底线角点，确认后才能创建实时实验。角点使用归一化
 坐标随请求传到 L40S；该步骤是推理输入的一部分，不是仅用于前端展示的装饰流程。
+标点必须按实际显示的视频区域换算，扣除等比例居中显示产生的留边；点击留边不添加角点。
+标记严格使用用户点击的位置，不自动吸附或替换为模型识别的角点。
 
 - “真实端到端实验”默认使用内置 Demo，也允许“上传其他视频”。上传素材先由本地可信
   服务验证，再启动临时 L40S；模型准备完成后由本机视频模拟摄像头，以原始速度编码到
@@ -71,3 +73,5 @@
 
 算法边界记录在 `docs/CURRENT_ARCHITECTURE.md`。常规前端迭代只允许修改 `web/`、展示文案、
 只读报告和可视化资源，不得调整跟踪、轨迹、落点或规则判断。
+
+Offline calibration previews projected service/singles lines. Replay selects the current `court_keyframes` geometry and clears the minimap from `rallies` boundaries, including the opening hit before the next touchdown. Old reports retain a bounded contact-based fallback.

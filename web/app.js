@@ -104,6 +104,20 @@ async function requestCourtCalibration(calibration) {
         if (points.length === 4) ctx.closePath();
         ctx.stroke(); ctx.setLineDash([]);
       }
+      if (points.length === 4) {
+        const project = courtProjector(points.map(([x, y]) =>
+          [x / image.naturalWidth, y / image.naturalHeight]), canvas.width, canvas.height);
+        if (project) {
+          ctx.strokeStyle = '#c4f12c'; ctx.lineWidth = 1.5; ctx.beginPath();
+          const lines = [[1.37, 0, 1.37, 23.77], [9.60, 0, 9.60, 23.77],
+            [1.37, 5.485, 9.60, 5.485], [1.37, 18.285, 9.60, 18.285],
+            [5.485, 5.485, 5.485, 18.285], [0, 11.885, 10.97, 11.885]];
+          lines.forEach(([x0, y0, x1, y1]) => {
+            ctx.moveTo(...project(x0, y0)); ctx.lineTo(...project(x1, y1));
+          });
+          ctx.stroke();
+        }
+      }
       points.forEach((point, index) => {
         const x = point[0] * displayScale, y = point[1] * displayScale;
         ctx.fillStyle = '#c4f12c'; ctx.strokeStyle = '#25143a'; ctx.lineWidth = 3;
@@ -113,12 +127,12 @@ async function requestCourtCalibration(calibration) {
       });
       $('#calibrationStep').textContent = points.length < 4
         ? `第 ${points.length + 1} 步：点击${labels[points.length]}`
-        : '四个角点已标记，请确认球场轮廓';
+        : '四个角点已标记，请检查发球线、单打边线是否与画面重合';
       $('#calibrationSubmit').disabled = points.length !== 4;
     };
 
     $('#calibrationReason').textContent = calibration.reason || '自动识别没有达到可靠标准，请确认四个底线角点。';
-    image.onload = () => { redraw(); dialog.showModal(); };
+    image.onload = () => { dialog.showModal(); redraw(); };
     image.onerror = () => reject(new Error('无法读取球场确认画面'));
     image.src = `${calibration.preview}?v=${encodeURIComponent(calibration.request_id)}`;
     canvas.onclick = (event) => {
@@ -1179,11 +1193,48 @@ function drawRedCross(ctx, x, y, radius = 6) {
   ctx.restore();
 }
 
+function sceneFrameAt(scene, now) {
+  const times = scene?.frame_times;
+  if (!times?.length) return Math.max(0, Math.floor(now * (scene?.fps || 0)));
+  let lo = 0, hi = times.length - 1, found = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (times[mid] <= now) { found = mid; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  return found;
+}
+
 function eventDecisionTime(event) {
+  if (Number.isFinite(event?.decision_t)) return event.decision_t;
   const frame = Number(event?.decision_frame);
   return Number.isFinite(frame) && state.scene?.fps
     ? frame / state.scene.fps
     : Number(event?.t || 0);
+}
+
+function activeRallyAt(scene, now) {
+  const frame = sceneFrameAt(scene, now);
+  if (scene.rallies) {
+    return scene.rallies.find((r) => r.start_frame <= frame && frame < r.display_end_frame)?.rally_id ?? null;
+  }
+  // Older reports have no boundaries; a hit still resets before the next bounce.
+  const contact = [...(scene.hits || []), ...(scene.bounces || []), ...(scene.net_hits || [])]
+    .filter((e) => e.rally_id != null && e.frame <= frame)
+    .sort((a, b) => b.frame - a.frame)[0];
+  return contact && now - contact.frame / scene.fps <= 2 ? contact.rally_id : null;
+}
+
+function courtCornersAt(scene, now) {
+  const keys = scene?.court_keyframes || [];
+  const frame = sceneFrameAt(scene, now);
+  let lo = 0, hi = keys.length - 1, found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (keys[mid].frame <= frame) { found = mid; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  return found >= 0 ? keys[found].corners : scene?.court_image_corners;
 }
 
 function courtProjector(corners, width, height) {
@@ -1211,7 +1262,7 @@ function drawVideoBallAndTrail(ctx, width, height, now) {
   if ($('#analysisVideo').closest('.video-shell').classList.contains('browser-corrected')) return;
   const frames = state.scene?.frames || [];
   if (!frames.length || !state.scene?.fps) return;
-  const frameIndex = Math.min(frames.length - 1, Math.max(0, Math.round(now * state.scene.fps)));
+  const frameIndex = Math.min(frames.length - 1, Math.max(0, sceneFrameAt(state.scene, now)));
   const current = frames[frameIndex];
   if (!Array.isArray(current?.bp)) return;
   let start = Math.max(0, frameIndex - Math.max(8, Math.round(0.84 * state.scene.fps)));
@@ -1256,7 +1307,8 @@ function drawEventOverlay() {
   ]
     .filter((event) => eventDecisionTime(event) <= now)
     .sort((a, b) => eventDecisionTime(b) - eventDecisionTime(a));
-  const latest = confirmedEvents[0];
+  const activeRally = activeRallyAt(state.scene, now);
+  const latest = confirmedEvents.find((e) => e.rally_id === activeRally);
   // The current-rally minimap persists after touchdown. Only the yellow zone flash
   // expires; coupling both to the same 1.15-second window made the whole map vanish.
   const recentDecision = latest && now - eventDecisionTime(latest) <= 1.15 ? latest : null;
@@ -1264,7 +1316,7 @@ function drawEventOverlay() {
   const bounds = recentDecision?.eventKind === 'bounce'
     ? zoneBounds[recentDecision.zone]
     : null;
-  const projectCourt = courtProjector(state.scene.court_image_corners, width, height);
+  const projectCourt = courtProjector(courtCornersAt(state.scene, now), width, height);
   if (bounds && projectCourt && !$('#analysisVideo').closest('.video-shell').classList.contains('browser-corrected')) {
     const polygon = [
       projectCourt(bounds[0], bounds[1]), projectCourt(bounds[2], bounds[1]),
@@ -1303,7 +1355,7 @@ function drawEventOverlay() {
     ctx.fillRect(px(bounds[0]), py(bounds[3]), px(bounds[2]) - px(bounds[0]), py(bounds[1]) - py(bounds[3]));
   }
   state.scene.bounces
-    .filter((bounce) => latest && bounce.rally_id === latest.rally_id && eventDecisionTime(bounce) <= now)
+    .filter((bounce) => activeRally != null && bounce.rally_id === activeRally && eventDecisionTime(bounce) <= now)
     .forEach((bounce) => {
       const lineCall = bounce.line_call || (bounce.zone === 'Out' ? 'out' : 'in');
       const worldX = lineCall === 'out' ? Math.max(xMin, Math.min(xMax, bounce.x)) : bounce.x;
@@ -1318,7 +1370,7 @@ function drawEventOverlay() {
       }
     });
   (state.scene.net_hits || [])
-    .filter((event) => latest && event.rally_id === latest.rally_id && eventDecisionTime(event) <= now)
+    .filter((event) => activeRally != null && event.rally_id === activeRally && eventDecisionTime(event) <= now)
     .forEach((event) => drawRedCross(ctx, px(event.x), py(event.y), 5));
   ctx.restore();
 }

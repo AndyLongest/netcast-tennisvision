@@ -224,11 +224,31 @@ used as tie-breakers; if automatic court detection finds nothing, the clearest n
 sample is shown. This prevents a black intro or fade-in from producing an unusable marking
 canvas.
 
-For a fixed-camera job, an accepted automatic or manual quadrilateral is authoritative for
-every decoded frame. Per-frame paint contrast may control which line fragments are drawn,
-but it cannot revoke the court coordinate system or suppress ball tracking. The rounded
-four-corner geometry is part of the Pass-A cache signature, so a corrected calibration
-never reuses court metadata produced for different corners.
+For a fixed-camera job, the accepted automatic or manual quadrilateral remains the
+reference. `vision/court_motion.py` registers native frames to that reference using
+spatially distributed ORB/RANSAC matches, excluding fixed broadcast graphics. A measured
+reframing carries the same confirmed corners into the current image; it never refits or
+snaps the user's corners to other court lines. An unchanged view preserves exact reference
+coordinates; insufficient matches retain the last geometry and are recorded as unverified.
+Registration is cached against the video identity, reference image and exact corners.
+Per-frame paint contrast cannot revoke manual geometry or suppress tracking. Pass-A also
+includes the rounded calibration in its cache signature.
+
+Offline reports export `court_keyframes` so the browser projects zones with the current
+frame's geometry, including after seeking. The confirmation dialog previews service and
+singles lines before submission. Ball observations remain owned by tracking. Contact fits
+express evidence in a common registered image plane, preventing camera translation from
+being treated as a ball impulse. Touchdown refinement searches a continuous quadratic
+change point within three frames of the proposal, requiring two-sided detector support,
+an upward impulse and improvement over smooth flight. Tennis-rule consistency alone is
+not physical evidence of a landing.
+
+`events/rallies.py` assigns shared IDs after landing confirmation. Out/net/second-bounce
+outcomes close points; discarded candidates cannot bridge inactivity. The exported
+`rallies` timeline controls both the browser and baked minimap: the next hit clears old
+markers immediately, and dead time expires the preceding map after two seconds. This is
+contact-based segmentation, not a newly trained serve/scoreboard recognizer; missed or
+false hits can still require review.
 
 ## Report delivery and video rendering
 
@@ -403,3 +423,5 @@ report became available after 484.09s (8m04s). The unchanged-resolution annotate
 finished after 753.19s (12m33s), including 269s of background rendering. The resulting
 scene retained 782 tracked frames, 8 bounces and 4 racket hits, and its SHA-256 remained
 exactly `c93f53b6748cb0f543ebf148202d7b879ed915b5c8dbf2c1e301044d9f2e3f5e`.
+
+Offline reports preserve decoder presentation timestamps in `frame_times` and contact `decision_t`. Browser frame selection uses this timeline, not only frame index divided by nominal fps. This preserves initial offsets and internal gaps without adding or interpolating ball observations.

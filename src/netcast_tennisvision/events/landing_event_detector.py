@@ -15,6 +15,26 @@ from typing import Any
 
 import numpy as np
 
+from netcast_tennisvision.events.contact_view import point_in_contact_view
+
+
+def racket_confounded_landing(landing, contacts, *, fps):
+    """Do not count one racket impulse again as a neighbouring ground contact.
+
+    Close half-volleys require independent ground/sequence evidence; a strong
+    trajectory kink alone cannot disambiguate two contacts within 67 ms.
+    """
+    arc = landing.get("arc") or {}
+    if (arc.get("reverses") and arc.get("disagree", float("inf")) <= 1.5
+            or float(landing.get("sequence_p") or 0) >= .20):
+        return False
+    for hit in contacts:
+        confidence = float((hit.get("contact_hypothesis") or {}).get("confidence", 0))
+        if (hit.get("kind") == "hit" and confidence >= .65
+                and abs(hit["frame"] - landing["frame"]) <= max(1, round(fps / 15))):
+            return True
+    return False
+
 
 @dataclass(frozen=True)
 class LandingImpulse:
@@ -77,7 +97,8 @@ def score_landing_impulse(
         if (point is None or not meta.get("ball_seen", False)
                 or (track_id is not None and meta.get("ball_track_id") != track_id)):
             continue
-        samples.append((index - frame, point, float(meta.get("ball_confidence", 0.5))))
+        samples.append((index - frame, point_in_contact_view(meta, centre),
+                        float(meta.get("ball_confidence", 0.5))))
     before = sum(1 for t, _, _ in samples if t < 0)
     after = sum(1 for t, _, _ in samples if t > 0)
     if before < min_side_support or after < min_side_support:

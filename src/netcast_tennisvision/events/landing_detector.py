@@ -11,6 +11,8 @@ from typing import Any
 
 import numpy as np
 
+from netcast_tennisvision.events.contact_view import point_in_contact_view
+
 
 def _robust_polynomial(samples: list[tuple[float, np.ndarray, float]], degree: int):
     t = np.asarray([s[0] for s in samples], dtype=float)
@@ -63,7 +65,7 @@ def estimate_landing_subframe(
         if (point is None or not meta.get("ball_seen", False)
                 or (track_id is not None and meta.get("ball_track_id") != track_id)):
             continue
-        sample = (float(index), np.asarray(point, dtype=float),
+        sample = (float(index), point_in_contact_view(meta, centre),
                   float(meta.get("ball_confidence", 0.5)))
         (before if index <= frame else after).append(sample)
 
@@ -75,6 +77,47 @@ def estimate_landing_subframe(
                                                          frame + confirmation_frames),
             "branch_disagreement_px": None, "uncertainty_px": None,
         }
+
+    # Fit a continuous change point instead of assuming the candidate already
+    # separates the two flight branches. A detector peak can lag contact by
+    # several frames. The hinge must beat a smooth trajectory and have the
+    # upward image-space impulse of a bounce; smooth flight is not evidence.
+    samples = before + after
+    times = np.asarray([s[0] - frame for s in samples])
+    positions = np.asarray([s[1] for s in samples])
+    weights = np.sqrt(np.asarray([max(.15, s[2]) for s in samples]))[:, None]
+    smooth = np.column_stack((np.ones(support), times, times**2))
+    coeff = np.linalg.lstsq(smooth * weights, positions * weights, rcond=None)[0]
+    smooth_error = float(np.sum(((smooth @ coeff - positions) * weights)**2))
+    best_fit = None
+    span = min(3.0, radius / 2)
+    for offset in np.linspace(-span, span, int(span * 40) + 1):
+        if np.count_nonzero(times <= offset) < 3 or np.count_nonzero(times > offset) < 3:
+            continue
+        design = np.column_stack((smooth, np.maximum(times - offset, 0)))
+        coeff = np.linalg.lstsq(design * weights, positions * weights, rcond=None)[0]
+        residual = design @ coeff - positions
+        error = float(np.sum((residual * weights)**2))
+        if best_fit is None or error < best_fit[0]:
+            best_fit = error, offset, coeff, residual
+    if best_fit is not None:
+        error, offset, coeff, residual = best_fit
+        n = support * 2
+        improvement = n * np.log(max(smooth_error, 1e-8) / max(error, 1e-8)) - 3 * np.log(n)
+        noise = float(np.sqrt(np.mean(residual**2)))
+        impulse = float(-coeff[3, 1])
+        if improvement >= 10 and impulse > max(.5, 2 * noise) and abs(offset) < span:
+            contact = np.asarray([1, offset, offset**2, 0]) @ coeff
+            frame_f = float(frame + offset)
+            return {
+                "frame_f": frame_f, "px": tuple(map(float, contact)),
+                "confidence": "subframe", "support": support,
+                "branch_disagreement_px": 0.0, "uncertainty_px": noise,
+                "impulse_bic_gain": float(improvement),
+                "decision_frame": min(len(frames_meta) - 1, max(
+                    frame + 1, ceil(frame_f) + confirmation_frames,
+                    int(after[2][0]))),
+            }
 
     degree_before = 2 if len(before) >= 5 else 1
     degree_after = 2 if len(after) >= 5 else 1

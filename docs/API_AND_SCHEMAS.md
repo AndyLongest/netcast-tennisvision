@@ -127,7 +127,9 @@ Top-level fields currently include:
 - `frames`: per-frame compact 3D/display state;
 - `bounces`: confirmed touchdown events;
 - `net_hits`: confirmed terminal net contacts;
-- `hits`: racket-contact events;
+- `hits`: racket-contact events including `rally_id`;
+- `court_keyframes`: sorted `{frame, corners}` records in normalized image coordinates; use the latest at or before the displayed native frame;
+- `rallies`: `{rally_id, start_frame, end_frame, end_reason, display_end_frame}`; the display interval is start-inclusive/end-exclusive;
 - `play_mode`: temporal near/far head-count decision, confidence and vote distribution;
 - `player_identities`: stable A/B display colours;
 - `player_identity_metrics`: auditable OSNet-AIN sampling and side-change diagnostics;
@@ -179,3 +181,5 @@ change must update `web/app.js`, the 3D exporter, frozen demo, manifest and test
 - In-court landing dots use the hitter's A/B colour; out events remain red crosses.
 - Perspective correction is applied after inference and annotation rendering but before
   the minimap is composited. It cannot change tracking, contacts, landing coordinates or zones.
+
+Offline reports preserve decoder presentation timestamps in `frame_times` and contact `decision_t`. Browser frame selection uses this timeline, not only frame index divided by nominal fps. This preserves initial offsets and internal gaps without adding or interpolating ball observations.

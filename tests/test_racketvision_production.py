@@ -98,7 +98,8 @@ def test_fixed_camera_manual_calibration_cannot_be_revoked_by_weak_line_score():
     source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
     assert "calibration_signature = hashlib.sha256(" in source
     assert 'f"cal{calibration_signature}"' in source
-    assert "smooth = np.repeat(np.asarray(CALIB_CORNERS, float)[None]" in source
+    assert "smooth, court_alignment_verified, source_frame_times = registered_video_courts(" in source
+    assert "CLIP_PATH, court_reference, CALIB_CORNERS, N_FRAMES" in source
     assert 'm["is_court"] = True if FIXED_COURT else' in source
 
 
