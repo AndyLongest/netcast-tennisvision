@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import io
 
 from netcast_tennisvision.api import server
 from netcast_tennisvision.api.server import (
@@ -8,6 +9,22 @@ from netcast_tennisvision.api.server import (
     supports_native_fps,
     video_fingerprint,
 )
+
+
+def test_ui_responses_revalidate_but_video_preserves_range_support():
+    for path in ("/web/index.html", "/web/app.js?v=old", "/web/styles.css", "/"):
+        handler = object.__new__(server.Handler)
+        handler.path = path
+        handler.request_version = "HTTP/1.1"
+        handler.wfile = io.BytesIO()
+        handler._headers_buffer = []
+        handler.end_headers()
+        assert b"Cache-Control: no-cache, must-revalidate" in handler.wfile.getvalue()
+    handler.path = "/data/clip.mp4"
+    handler.wfile = io.BytesIO()
+    handler.end_headers()
+    assert b"Accept-Ranges: bytes" in handler.wfile.getvalue()
+    assert b"Cache-Control" not in handler.wfile.getvalue()
 
 
 def test_accepts_any_positive_native_frame_rate():

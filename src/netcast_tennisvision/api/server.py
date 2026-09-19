@@ -491,8 +491,13 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def end_headers(self) -> None:
-        """Tell browsers that generated match videos support seeking."""
-        if urlparse(self.path).path.lower().endswith(".mp4"):
+        """Revalidate UI releases while allowing generated videos to seek."""
+        path = urlparse(self.path).path.lower()
+        if path.endswith((".html", ".js", ".css")) or path in ("/", "/web/"):
+            # A new report can otherwise be opened by a cached renderer which
+            # ignores its per-frame court geometry and uses the first frame.
+            self.send_header("Cache-Control", "no-cache, must-revalidate")
+        if path.endswith(".mp4"):
             self.send_header("Accept-Ranges", "bytes")
         super().end_headers()
 

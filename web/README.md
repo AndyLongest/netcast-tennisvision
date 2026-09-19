@@ -22,6 +22,9 @@ but it must not infer new hits, landings, court sides or player ownership.
 - A pending analysis shows an explicit analysis state, never the unannotated source as if
   it were a completed result.
 - Refreshing the page reattaches through `/api/status`; it must not create a duplicate job.
+- Court overlays select `court_keyframes` at the current source PTS, including after
+  seeking backwards. HTML/JS/CSS responses require cache revalidation so a newly
+  generated report cannot silently retain an older first-frame-only renderer.
 
 Backend endpoints and payload fields are defined in `../docs/API_AND_SCHEMAS.md`. Product
 copy and visual rules are defined in `../docs/FRONTEND_PRODUCT.md`.
