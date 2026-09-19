@@ -2,7 +2,9 @@ import cv2
 import numpy as np
 
 from netcast_tennisvision.vision.court_motion import (
-    ConfirmedCourtMotion, PeriodicCourtMotion, registered_video_courts,
+    ConfirmedCourtMotion,
+    PeriodicCourtMotion,
+    registered_video_courts,
 )
 
 
