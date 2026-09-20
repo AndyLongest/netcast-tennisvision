@@ -1,5 +1,9 @@
 # Netcast TennisVision
 
+**团队 App 集成评估入口：** [App 集成工程量评估说明](docs/APP_INTEGRATION_REVIEW.md)。
+先阅读代码、架构和接口即可初评，无需先安装模型或提供云端密钥。
+需要实际联调时再使用 [接手 Agent 配置指引](docs/TEAM_AGENT_SETUP.md)。
+
 > Handoff status: the source tree is being prepared for a new engineering owner. Local
 > development is supported; public redistribution is still blocked by the licensing
 > decisions in [docs/PUBLICATION_CHECKLIST.md](docs/PUBLICATION_CHECKLIST.md).

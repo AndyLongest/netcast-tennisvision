@@ -7,6 +7,8 @@ agents should start at `AGENTS.md`, then use this page instead of reading every 
 
 | Need | Document | Why it is authoritative |
 |---|---|---|
+| Estimate App integration work without running the stack | [`APP_INTEGRATION_REVIEW.md`](APP_INTEGRATION_REVIEW.md) | Scope, code map, backend migration, live media and assessment deliverables |
+| Configure a teammate's machine with an Agent | [`TEAM_AGENT_SETUP.md`](TEAM_AGENT_SETUP.md) | Chinese setup guide, automatic actions, required credentials and two-service acceptance checks |
 | Understand the product and run it | [`../README.md`](../README.md) | Product scope, setup and supported entry points |
 | Take over the repository | [`HANDOFF.md`](HANDOFF.md) | Frozen facts, ownership boundaries and definition of done |
 | Change runtime behavior | [`CURRENT_ARCHITECTURE.md`](CURRENT_ARCHITECTURE.md) | Only supported data flow and algorithm contracts |
