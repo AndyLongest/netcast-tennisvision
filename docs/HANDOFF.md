@@ -128,3 +128,7 @@ code may not depend on its parent workspace.
 `docs/NEXT_STEPS.md` is the prioritized backlog. Historical thresholds in `docs/history/`
 are evidence, not supported runtime alternatives. `docs/PUBLICATION_CHECKLIST.md` contains
 legal/distribution blockers and must be completed before making the repository public.
+
+## Live speed integration — 2026-09-23
+
+Cloud image production-v31 is published and selected in the workstation user environment. The maintained pseudo-live path uses a bounded background linear speed fit; `web/live-lab.html` displays accepted flight-window estimates. Cloud production smoke: flat2 90-second file, L40S, 2,674 processed RTMP frames, 16 accepted speed windows, one reported drop. Wall time 90.31 s; realtime factor 1.013; peak backlog 0.967 s. Speed source-time-to-compute age median 588 ms/P95 686 ms (not browser presentation latency). Actual browser displayed records through ECS relay, display toggle worked, terminal history retained. Instance journal removed after automatic release. Raw evidence: `outputs/live_speed_production/`. Frame total excludes RTMP startup frames; do not claim lossless or validated radar accuracy. Frontend now keeps polling during reconnecting.

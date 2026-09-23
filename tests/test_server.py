@@ -141,7 +141,7 @@ def test_video_fingerprint_uses_content_and_size(tmp_path):
 
 
 def test_analysis_version_matches_the_cloud_release():
-    assert server.ANALYSIS_VERSION == "production-v30"
+    assert server.ANALYSIS_VERSION == "production-v31"
 
 
 def test_completed_analysis_is_archived_and_can_be_deleted(tmp_path, monkeypatch):
@@ -375,3 +375,4 @@ def test_unavailable_local_gpu_rejects_without_upload_or_cloud(tmp_path, monkeyp
     assert handler.send_json.call_args.args[1] == 422
     assert handler.send_json.call_args.args[0]['code'] == 'local_gpu_unavailable'
     assert not server.CURRENT_JOB.exists()
+

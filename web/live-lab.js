@@ -102,7 +102,7 @@ function eventPlayerColor(event) {
 }
 function resetTimeline() {
   state.delivered = []; state.nextEvent = 0; state.activeRally = null; state.eventCursor = 0;
-  state.pendingLiveEvents = []; state.latestLivePayload = null;
+  state.pendingLiveEvents = []; state.latestLivePayload = null; state.speedVisibleTime = null;
   clearTimeout(state.liveSyncTimer); state.liveSyncTimer = 0;
   byId('eventFeed').innerHTML = '<li class="empty-feed">等待首个落点确认…</li>';
   byId('landingCount').textContent = '0';
@@ -487,7 +487,7 @@ async function pollLiveExperiment() {
     state.missingPolls = 0;
     state.latestLivePayload = payload;
     applyPlayerPalette();
-    const running = ['queued', 'preparing', 'awaiting_stream', 'connecting', 'running'].includes(payload.state);
+    const running = ['queued', 'preparing', 'awaiting_stream', 'connecting', 'reconnecting', 'running'].includes(payload.state);
     setRunning(running, payload.stage || (running ? '直播中' : '已完成'));
     setRoutePhase(payload.state);
     syncRouteFlow(payload);
@@ -702,14 +702,17 @@ if (resumeSession) {
 
 function renderLiveSpeed(payload) {
   const speed = payload?.speed;
-  const visibleTime = state.mode === 'live' ? displayedLiveSourceTime(payload) : null;
+  const playbackTime = state.mode === 'live' ? displayedLiveSourceTime(payload) : null;
+  if (playbackTime != null) state.speedVisibleTime = playbackTime;
+  const finished = payload?.state === 'complete';
+  const visibleTime = finished ? Number(payload.source_time) : state.speedVisibleTime;
   const recent = (speed?.recent || []).filter(item => Number.isFinite(item.speed_kmh)
     && visibleTime != null && item.decision_t <= visibleTime + .025);
   const latest = recent.at(-1);
   const age = latest && visibleTime != null ? visibleTime - latest.time_s : Infinity;
-  byId('liveSpeedValue').textContent = latest && age < 3 ? Math.round(latest.speed_kmh) : '—';
+  byId('liveSpeedValue').textContent = !finished && latest && age < 3 ? Math.round(latest.speed_kmh) : '—';
   byId('liveSpeedHint').textContent = !speed ? '等待测速服务' : !speed.enabled ? '测速已关闭'
-    : latest && age < 3 ? '最近飞行片段 · 估算' : '等待可靠轨迹';
+    : finished ? '实验已完成' : latest && age < 3 ? '最近飞行片段 · 估算' : '等待可靠轨迹';
   // Summary is labelled by observation windows, never as shot/serve averages.
   byId('liveSpeedMean').textContent = speed?.count ? `${Math.round(speed.mean_kmh)} km/h` : '—';
   byId('liveSpeedMax').textContent = speed?.count ? `${Math.round(speed.max_kmh)} km/h` : '—';

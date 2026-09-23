@@ -56,3 +56,5 @@ The upload card offers “使用本机显卡分析”, off by default. It submit
 `viewpoint.js` presents the shared Python viewpoint classifier in both calibration
 screens and the initial-camera report label. It owns no thresholds and does not change
 coordinates or select an analysis model. Stale preview responses are discarded.
+
+Live speed appears in the pseudo-live result card (`live-lab.html`). It uses the server speed payload without fitting on the browser. Large km/h text, recent records and window statistics are labelled estimates; no accepted estimate means an em dash. The display toggle only hides values.

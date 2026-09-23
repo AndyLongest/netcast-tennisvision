@@ -250,3 +250,7 @@ camera recovery. A homography and any nonzero scaled equivalent, including a
 negative multiple produced by matrix inversion, must yield identical speeds.
 Optional internal `diagnostics` counters record rejection reasons without changing
 returned scene schema or filtering thresholds. Regression includes signed scales.
+
+### Live speed status
+
+Live snapshots optionally contain `speed`: `enabled`, `method`, `latest`, `recent` (last 30 accepted windows), `count`, `mean_kmh`, `max_kmh`, `metric`. Each accepted estimate additionally has `id`, `emitted_at`, `decision_t`, `delay_ms`. Times are source seconds except `emitted_at` (Unix seconds). Speed is km/h. This field is independent of landing events and their cursor. The frontend gates individual records by playback `decision_t`, expires the current value after three source seconds, and supports hiding the panel without disabling computation.

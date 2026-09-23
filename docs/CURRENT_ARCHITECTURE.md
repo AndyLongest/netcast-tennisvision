@@ -510,3 +510,7 @@ speed only for accepted windows. Default is gravity plus tennis quadratic drag;
 `TENNISVISION_SPEED_METHOD=gravity|off` provides rollback/disable. No ball observations
 or event timestamps are changed. Camera intrinsics assumptions and unmodelled spin
 limit accuracy; estimates are not radar-validated. See API_AND_SCHEMAS.md.
+
+### Live speed display (production-v31)
+
+Pseudo-live uses `streaming/speed_worker.py`: a single background worker, at most one flight fit in progress and no pending queue. The linear short-window estimator publishes immediately through the existing result relay. It never changes tracking or touchdown events. `TENNISVISION_LIVE_SPEED=0` on the worker disables computation. The frontend shows estimated short-flight midpoint speed, recent windows, window mean and maximum; these are not radar serve speeds or per-shot statistics.
