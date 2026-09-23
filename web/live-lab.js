@@ -305,7 +305,7 @@ function syncRouteFlow(payload) {
   byId('flowAnalysis').textContent = `${Number(payload.event_cursor) || 0} 个落点 · ${backlog.toFixed(2)} 秒积压`;
 }
 
-function liveCalibrationPoint(clientX, clientY, rect, imageWidth, imageHeight) {
+function liveCalibrationPoint(clientX, clientY, rect, imageWidth, imageHeight, margin = 0) {
   // object-fit: contain centres the image inside the CSS canvas box. Pointer
   // coordinates must exclude that letterboxing before becoming video coordinates.
   const scale = Math.min(rect.width / imageWidth, rect.height / imageHeight);
@@ -315,7 +315,7 @@ function liveCalibrationPoint(clientX, clientY, rect, imageWidth, imageHeight) {
   const top = rect.top + (rect.height - height) / 2;
   const x = (clientX - left) / width, y = (clientY - top) / height;
   if (x < 0 || x > 1 || y < 0 || y > 1) return null;
-  return [x, y];
+  return [x * (1 + 2 * margin) - margin, y * (1 + 2 * margin) - margin];
 }
 
 function redrawLiveCalibration() {
@@ -323,14 +323,17 @@ function redrawLiveCalibration() {
   const video = byId('liveCalibrationVideo');
   if (!state.calibration.frameReady || !video.videoWidth) return;
   const maxWidth = Math.min(1280, video.videoWidth);
-  const maxHeight = Math.round(maxWidth * video.videoHeight / video.videoWidth);
-  if (canvas.width !== maxWidth || canvas.height !== maxHeight) {
-    canvas.width = maxWidth; canvas.height = maxHeight;
-    canvas.style.aspectRatio = `${maxWidth}/${maxHeight}`;
+  const paddedWidth = Math.round(maxWidth * 1.3);
+  const paddedHeight = Math.round(maxWidth * video.videoHeight / video.videoWidth * 1.3);
+  if (canvas.width !== paddedWidth || canvas.height !== paddedHeight) {
+    canvas.width = paddedWidth; canvas.height = paddedHeight;
+    canvas.style.aspectRatio = `${paddedWidth}/${paddedHeight}`;
   }
   const ctx = canvas.getContext('2d');
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  const points = state.calibration.points.map(([x, y]) => [x * canvas.width, y * canvas.height]);
+  const imageWidth = canvas.width / 1.3, imageHeight = canvas.height / 1.3;
+  ctx.fillStyle = '#302738'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(video, imageWidth * 0.15, imageHeight * 0.15, imageWidth, imageHeight);
+  const points = state.calibration.points.map(([x, y]) => [(x + 0.15) * imageWidth, (y + 0.15) * imageHeight]);
   if (points.length > 1) {
     ctx.strokeStyle = '#c4f12c'; ctx.lineWidth = 3; ctx.setLineDash([10, 7]);
     ctx.beginPath(); points.forEach((point, index) => index ? ctx.lineTo(...point) : ctx.moveTo(...point));
@@ -346,6 +349,7 @@ function redrawLiveCalibration() {
 
 function resetLiveCalibration() {
   state.calibration.points = [];
+  showCourtViewpoint(byId('liveViewpoint'), null, 0, 0);
   byId('liveCalibrationStep').textContent = '第 1 步：点击近端左角';
   byId('liveCalibrationConfirm').disabled = true;
   redrawLiveCalibration();
@@ -631,7 +635,7 @@ byId('liveCalibrationCanvas').addEventListener('click', (event) => {
   if (!state.calibration.frameReady || state.calibration.points.length >= 4) return;
   const canvas = event.currentTarget;
   const point = liveCalibrationPoint(
-    event.clientX, event.clientY, canvas.getBoundingClientRect(), canvas.width, canvas.height,
+    event.clientX, event.clientY, canvas.getBoundingClientRect(), canvas.width, canvas.height, 0.15,
   );
   if (!point) return;
   state.calibration.points.push(point);
@@ -641,6 +645,8 @@ byId('liveCalibrationCanvas').addEventListener('click', (event) => {
     ? '四个角点已标记，请确认后启动'
     : `第 ${count + 1} 步：点击${labels[count]}`;
   byId('liveCalibrationConfirm').disabled = count !== 4;
+  const source = byId('liveCalibrationVideo');
+  showCourtViewpoint(byId('liveViewpoint'), state.calibration.points, source.videoWidth, source.videoHeight);
   redrawLiveCalibration();
 });
 byId('liveCalibrationReset').addEventListener('click', resetLiveCalibration);
@@ -693,3 +699,27 @@ if (resumeSession) {
 } else {
   setRoutePhase('idle');
 }
+
+function renderLiveSpeed(payload) {
+  const speed = payload?.speed;
+  const visibleTime = state.mode === 'live' ? displayedLiveSourceTime(payload) : null;
+  const recent = (speed?.recent || []).filter(item => Number.isFinite(item.speed_kmh)
+    && visibleTime != null && item.decision_t <= visibleTime + .025);
+  const latest = recent.at(-1);
+  const age = latest && visibleTime != null ? visibleTime - latest.time_s : Infinity;
+  byId('liveSpeedValue').textContent = latest && age < 3 ? Math.round(latest.speed_kmh) : '—';
+  byId('liveSpeedHint').textContent = !speed ? '等待测速服务' : !speed.enabled ? '测速已关闭'
+    : latest && age < 3 ? '最近飞行片段 · 估算' : '等待可靠轨迹';
+  // Summary is labelled by observation windows, never as shot/serve averages.
+  byId('liveSpeedMean').textContent = speed?.count ? `${Math.round(speed.mean_kmh)} km/h` : '—';
+  byId('liveSpeedMax').textContent = speed?.count ? `${Math.round(speed.max_kmh)} km/h` : '—';
+  byId('liveSpeedCount').textContent = speed?.count || 0;
+  byId('liveSpeedHistory').replaceChildren(...recent.slice(-6).reverse().map(item => {
+    const li = document.createElement('li'), time = document.createElement('time');
+    time.textContent = formatClock(item.time_s); li.append(time, `${Math.round(item.speed_kmh)} km/h`); return li;
+  }));
+}
+byId('showLiveSpeed').addEventListener('change', event => {
+  byId('liveSpeedContent').hidden = !event.target.checked;
+});
+setInterval(() => renderLiveSpeed(state.latestLivePayload), 150);

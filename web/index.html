@@ -40,6 +40,7 @@
       </div>
 
       <div class="upload-card" id="uploadCard">
+        <label class="compute-choice"><input id="localGpuToggle" type="checkbox" role="switch" /> <span>使用本机显卡分析<small>关闭时使用云端配置；开启后使用本机 NVIDIA 显卡，无云端 GPU 费用。</small></span></label>
         <div class="upload-head">
           <div><span class="step-kicker">开始一次新分析</span><h2>上传比赛视频</h2></div>
           <span class="time-chip" title="上传后自动完成比赛分析"><i>⚡</i> 智能分析</span>
@@ -79,6 +80,8 @@
           <p id="processingMessage">正在读取视频画面与声音…</p>
           <div class="progress-heading"><strong id="progressValue">0%</strong><span id="timeHint">正在准备分析</span></div>
           <div class="progress-track"><span id="progressBar"></span></div>
+          <button class="secondary-button stop-analysis" type="button">强制停止</button>
+          <p class="stop-hint">停止本次分析并释放云端算力，随后可上传新视频。</p>
           <ul class="stage-list" id="stageList">
             <li class="active"><b>1</b><span>读取比赛视频<small>检查帧率、画质与声音</small></span><i></i></li>
             <li><b>2</b><span>建立球场坐标<small>识别边线与两名球员</small></span><i></i></li>
@@ -97,6 +100,7 @@
           <p><span id="reportMeta">58.1 秒 · 1280 × 720 · 每秒 29.9 帧</span><span class="dot-sep">•</span>刚刚生成</p>
         </div>
         <div class="report-actions">
+          <button class="secondary-button stop-analysis" id="reportStopBtn" type="button" hidden>强制停止</button>
           <button class="secondary-button" id="exportBtn"><span>↓</span> 导出分析数据</button>
           <button class="primary-button compact" id="shareBtn"><span>↗</span> 保存复盘报告</button>
         </div>
@@ -113,7 +117,9 @@
         </div>
       </div>
 
-      <div class="metric-grid">
+      <p id="currentSpeed">当前飞行段球速：—</p>
+          <p id="speedSummary" aria-live="polite">估算球速：等待分析</p>
+          <div class="metric-grid">
         <article class="metric-card"><span class="metric-icon mint">⌁</span><div><small>落地次数</small><strong id="bounceCount">30</strong><p id="validBounceText">29 次界内落地</p></div><i class="trend">逐球确认</i></article>
         <article class="metric-card"><span class="metric-icon orange">✦</span><div><small>击球次数</small><strong id="hitCount">37</strong><p>球员、运动与声音融合</p></div><i class="trend">关键事件</i></article>
         <article class="metric-card"><span class="metric-icon blue">◎</span><div><small>球轨迹覆盖率</small><strong id="trackRate">73%</strong><p id="trackDetail">1,264 / 1,737 帧</p></div><i class="trend">真实结果</i></article>
@@ -123,10 +129,10 @@
       <div class="dashboard-grid">
         <article class="panel video-panel">
           <div class="panel-heading">
-            <div><span class="panel-kicker">比赛回放</span><h2>智能比赛回放</h2><p id="replayDescription">轨迹、球员、球场和落地区域已经叠加</p></div>
+            <div><span class="panel-kicker">比赛回放</span><h2>智能比赛回放</h2><p id="reportViewpoint" aria-live="polite"></p><p id="replayDescription">网球位置、球员、球场和落地区域已经叠加</p></div>
             <label class="switch"><input id="overlayToggle" type="checkbox" checked /><span></span><em>显示分析标记</em></label>
           </div>
-          <div class="video-shell"><video id="analysisVideo" playsinline controls preload="metadata"></video><canvas id="correctedVideoCanvas" aria-label="实时透视矫正比赛画面" hidden></canvas><canvas id="eventOverlay" aria-hidden="true"></canvas><span class="ai-label"><i></i> 智能分析</span><div class="video-legend"><span><i class="legend-player"></i> 球员</span><span><i class="legend-ball"></i> 球与轨迹</span><span><i class="legend-court"></i> 落地区域</span></div><div class="corrected-video-controls" id="correctedVideoControls" hidden><button id="correctedPlayButton" type="button" aria-label="播放">▶</button><input id="correctedSeek" type="range" min="0" max="1000" value="0" aria-label="视频进度" /><time id="correctedTime">00:00 / 00:00</time><button id="correctedFullscreen" type="button" aria-label="全屏">⛶</button></div><div class="replay-pending" id="replayPending" hidden aria-live="polite"><div class="replay-pending-mark"><i></i><i></i><b></b></div><strong>正在生成智能比赛回放</strong><span>分析结果已经就绪，正在叠加轨迹、球员与落地区域</span><small><i></i> 云端成片处理中</small></div></div>
+          <div class="video-shell"><video id="analysisVideo" playsinline controls preload="metadata"></video><canvas id="correctedVideoCanvas" aria-label="实时透视矫正比赛画面" hidden></canvas><canvas id="eventOverlay" aria-hidden="true"></canvas><span class="ai-label"><i></i> 智能分析</span><div class="video-legend"><span><i class="legend-player"></i> 球员</span><span><i class="legend-ball"></i> 网球位置</span><span><i class="legend-court"></i> 落地区域</span></div><div class="corrected-video-controls" id="correctedVideoControls" hidden><button id="correctedPlayButton" type="button" aria-label="播放">▶</button><input id="correctedSeek" type="range" min="0" max="1000" value="0" aria-label="视频进度" /><time id="correctedTime">00:00 / 00:00</time><button id="correctedFullscreen" type="button" aria-label="全屏">⛶</button></div><div class="replay-pending" id="replayPending" hidden aria-live="polite"><div class="replay-pending-mark"><i></i><i></i><b></b></div><strong>正在生成智能比赛回放</strong><span>分析结果已经就绪，正在叠加网球位置、球员与落地区域</span><small><i></i> 云端成片处理中</small></div></div>
           <div class="event-timeline"><div class="timeline-label"><span>整场关键事件</span><span><i class="bounce-key"></i> 落地 <i class="hit-key"></i> 击球</span></div><div class="timeline-track" id="eventTimeline"><i class="playhead" id="playhead"></i></div><div class="timeline-times"><span>00:00</span><span>00:15</span><span>00:30</span><span>00:45</span><span>01:00</span></div></div>
         </article>
 
@@ -218,9 +224,10 @@
   <dialog id="courtCalibrationDialog" class="calibration-dialog">
     <span class="dialog-icon">⌗</span><h2>帮系统确认一下球场</h2>
     <p class="calibration-intro" id="calibrationReason">自动识别没有达到可靠标准。只需依次点选四个底线角点，分析就会继续。</p>
-    <div class="calibration-step"><strong id="calibrationStep">第 1 步：点击近端左角</strong><button id="calibrationReset" type="button">重新标记</button></div>
+    <p id="calibrationViewpoint" aria-live="polite"></p><div class="calibration-step"><strong id="calibrationStep">第 1 步：点击近端左角</strong><button id="calibrationReset" type="button">重新标记</button></div>
     <div class="calibration-canvas-wrap"><canvas id="courtCalibrationCanvas"></canvas></div>
-    <p class="calibration-hint">顺序：近端左角 → 近端右角 → 远端右角 → 远端左角</p>
+    <p class="calibration-hint">顺序：近端左角 → 近端右角 → 远端右角 → 远端左角。角点在画面外时，可点击四周留白。</p>
+    <button class="secondary-button stop-analysis" type="button">强制停止</button>
     <button class="primary-button" id="calibrationSubmit" type="button" disabled>确认球场，继续分析</button>
   </dialog>
   <dialog id="helpDialog">
@@ -229,6 +236,7 @@
     <button class="primary-button dialog-ok">明白了，开始分析</button>
   </dialog>
   <script src="demo-scene.js?v=20260829a"></script>
-  <script src="app.js?v=20260919f"></script>
+  <script src="viewpoint.js?v=2"></script>
+  <script src="app.js?v=20260921e"></script>
 </body>
 </html>

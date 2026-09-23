@@ -40,10 +40,17 @@ MAX_TRANSFER_WORKERS = 8
 CAMERA_PROFILE_TRANSFER_LIMIT = 3 * 1024**2
 DEFAULT_ROOTFS_SIZE_GB = 60
 MINIMUM_ROOTFS_SIZE_GB = 10
+DEFAULT_GPU_FALLBACKS = (
+    "L40S.22c125g", "L40S.28c125g", "4090.16c125g", "4090.16c62g", "4090.16c96g.v2",
+)
 
 
 class CloudLifecycleError(RuntimeError):
     """A user-facing cloud provisioning or transfer failure."""
+
+
+class AnalysisCancelled(CloudLifecycleError):
+    """Cooperative exit; the owning worker still releases its instance."""
 
 
 class PPIOJobManager:
@@ -58,9 +65,11 @@ class PPIOJobManager:
         self.shared_secret = os.environ.get("TENNISVISION_CLOUD_TOKEN", "").strip()
         self.image = os.environ.get(
             "TENNISVISION_PPIO_IMAGE",
-            "image.ppinfra.com/prod-ahskpcitxxwcgdnfqfpu/netcast-tennisvision:production-v30",
+            "image.ppinfra.com/prod-ahskpcitxxwcgdnfqfpu/netcast-tennisvision:production-v31",
         ).strip()
         self.product_id = os.environ.get("TENNISVISION_PPIO_PRODUCT_ID", "L40S.22c125g")
+        self.selected_product_id: str | None = None
+        self.gpu_attempts: list[str] = []
         self.cluster_id = os.environ.get("TENNISVISION_PPIO_CLUSTER_ID", "cn-south-1")
         self.transfer_workers = self._bounded_worker_count(
             os.environ.get("TENNISVISION_TRANSFER_WORKERS", str(DEFAULT_TRANSFER_WORKERS))
@@ -69,6 +78,7 @@ class PPIOJobManager:
         self._thread: threading.Thread | None = None
         self._instance_id: str | None = None
         self._remote_url: str | None = None
+        self._cancel_event = threading.Event()
 
     @property
     def configured(self) -> bool:
@@ -100,6 +110,9 @@ class PPIOJobManager:
         with self._lock:
             if self.active:
                 raise CloudLifecycleError("已有云端分析任务正在运行")
+            if self.runtime_path.exists():
+                raise CloudLifecycleError("上次云端算力尚未释放，请先重试强制停止")
+            self._cancel_event.clear()
             self._thread = threading.Thread(
                 target=self._run,
                 args=(clip, upload_headers),
@@ -107,6 +120,37 @@ class PPIOJobManager:
                 daemon=True,
             )
             self._thread.start()
+
+    @property
+    def stopping(self) -> bool:
+        return self._cancel_event.is_set() and self.active
+
+    def stop(self) -> None:
+        """Request cancellation without freeing the single-job slot prematurely."""
+        with self._lock:
+            self._cancel_event.set()
+            if not self.active:
+                self._thread = threading.Thread(
+                    target=self._retry_cancel_cleanup, name="ppio-cancel-cleanup", daemon=True,
+                )
+                self._thread.start()
+
+    def _check_cancelled(self) -> None:
+        if self._cancel_event.is_set():
+            raise AnalysisCancelled("分析已停止")
+
+    def _retry_cancel_cleanup(self) -> None:
+        instance_id = self._read_json(self.runtime_path).get("instance_id")
+        released = not instance_id or self._release_instance(str(instance_id))
+        if released:
+            self.runtime_path.unlink(missing_ok=True)
+        self._write_cancel_status(released)
+
+    def _write_cancel_status(self, released: bool) -> None:
+        self._write_status(
+            "cancelled" if released else "stop_failed", 0,
+            "分析已停止，云端算力已释放" if released else "云端算力释放失败，请重试强制停止",
+        )
 
     def submit_calibration(self, payload: bytes) -> dict[str, Any]:
         with self._lock:
@@ -128,6 +172,7 @@ class PPIOJobManager:
         instance_id: str | None = None
         try:
             self._write_status("queued", 2, "正在启动临时云端算力")
+            self._check_cancelled()
             instance_id = self._create_instance()
             with self._lock:
                 self._instance_id = instance_id
@@ -135,6 +180,7 @@ class PPIOJobManager:
                 self.runtime_path,
                 {"instance_id": instance_id, "created_at": int(time.time())},
             )
+            self._check_cancelled()
             remote_url = self._wait_for_endpoint(instance_id)
             with self._lock:
                 self._remote_url = remote_url
@@ -143,6 +189,8 @@ class PPIOJobManager:
             self._write_status("queued", 4, "云端算力已就绪，正在上传比赛视频")
             self._upload_video(remote_url, clip, upload_headers)
             self._mirror_until_complete(remote_url)
+        except AnalysisCancelled:
+            pass
         except Exception as exc:  # worker boundary: always expose the failure and release GPU
             self._write_json(
                 self.status_path,
@@ -164,8 +212,59 @@ class PPIOJobManager:
                 self._remote_url = None
             if released:
                 self.runtime_path.unlink(missing_ok=True)
+            if self._cancel_event.is_set():
+                self._write_cancel_status(released)
 
     def _create_instance(self) -> str:
+        """Only a definite inventory rejection permits trying another GPU product.
+
+        Transport failures and malformed success responses are ambiguous: allocating
+        again could create a second billable instance, so they must propagate.
+        """
+        preferred = self.product_id
+        configured = os.environ.get("TENNISVISION_PPIO_FALLBACK_PRODUCTS")
+        if configured is not None:
+            candidates = [preferred, *(p.strip() for p in configured.split(",") if p.strip())]
+        elif preferred in DEFAULT_GPU_FALLBACKS:
+            candidates = list(DEFAULT_GPU_FALLBACKS[DEFAULT_GPU_FALLBACKS.index(preferred):])
+        else:
+            candidates = [preferred]
+        candidates = list(dict.fromkeys(candidates))[:8]
+        self.selected_product_id = None
+        self.gpu_attempts = []
+        try:
+            for index, product in enumerate(candidates):
+                self._check_cancelled()
+                self.product_id = product
+                self.gpu_attempts.append(product)
+                # Merge so live session identity and stop controls survive provisioning.
+                status = self._read_json(self.status_path)
+                status.update(stage=f"正在申请云端显卡 {product}（{index + 1}/{len(candidates)}）",
+                              cloud_product_id=None, cloud_gpu_attempts=list(self.gpu_attempts))
+                self._write_json(self.status_path, status)
+                try:
+                    instance_id = self._create_instance_for_product()
+                except CloudLifecycleError as exc:
+                    if not self._is_inventory_rejection(str(exc)):
+                        raise
+                    continue
+                self.selected_product_id = product
+                return instance_id
+            raise CloudLifecycleError(
+                "当前候选云端显卡均无库存，已依次尝试：" + " → ".join(self.gpu_attempts)
+                + "。请稍后重试，或选择本机显卡分析。"
+            )
+        finally:
+            # A new analysis always starts with the preferred GPU, not last time's fallback.
+            self.product_id = preferred
+
+    @staticmethod
+    def _is_inventory_rejection(message: str) -> bool:
+        return bool(re.search(r"resource insufficient with product\b|\bout of stock\b|"
+                              r"\binsufficient (?:gpu )?inventory\b|显卡库存不足|无可用显卡库存",
+                              message, re.I))
+
+    def _create_instance_for_product(self) -> str:
         rootfs_size = self._rootfs_size_for_product()
         payload = {
             "name": f"netcast-job-{int(time.time())}",
@@ -258,6 +357,7 @@ class PPIOJobManager:
         deadline = time.monotonic() + 10 * 60
         last_connection_error: CloudLifecycleError | None = None
         while time.monotonic() < deadline:
+            self._check_cancelled()
             try:
                 detail = self._provider_request("GET", f"/gpu/instance?instanceId={instance_id}")
                 last_connection_error = None
@@ -266,7 +366,7 @@ class PPIOJobManager:
                 # image is being scheduled or pulled.  The instance already exists,
                 # so a failed status read must not fail the user's whole analysis.
                 last_connection_error = exc
-                time.sleep(2)
+                self._cancel_event.wait(2)
                 continue
             state = str(detail.get("status", ""))
             if state in {"error", "failed"}:
@@ -276,7 +376,7 @@ class PPIOJobManager:
                 if int(mapping.get("port", 0)) == 8000 and mapping.get("endpoint"):
                     if state == "running":
                         return str(mapping["endpoint"]).rstrip("/")
-            time.sleep(2)
+            self._cancel_event.wait(2)
         if last_connection_error is not None:
             raise CloudLifecycleError(f"云端 GPU 启动超时：{last_connection_error}")
         raise CloudLifecycleError("云端 GPU 启动超时")
@@ -284,13 +384,14 @@ class PPIOJobManager:
     def _wait_for_service(self, remote_url: str) -> None:
         deadline = time.monotonic() + 5 * 60
         while time.monotonic() < deadline:
+            self._check_cancelled()
             try:
                 status, _ = self._remote_request(remote_url, "GET", "/api/status")
                 if status == 200:
                     return
             except (OSError, TimeoutError, http.client.HTTPException):
                 pass
-            time.sleep(2)
+            self._cancel_event.wait(2)
         raise CloudLifecycleError("云端分析服务启动超时")
 
     def _upload_video(
@@ -334,6 +435,7 @@ class PPIOJobManager:
 
             def submit_next() -> bool:
                 nonlocal index
+                self._check_cancelled()
                 chunk = source.read(chunk_size)
                 if not chunk:
                     return False
@@ -375,11 +477,13 @@ class PPIOJobManager:
         return completed
 
     def _upload_part(self, remote_url: str, upload_id: str, index: int, body: bytes) -> None:
+        self._check_cancelled()
         parsed = urlparse(remote_url)
         target = f"{parsed.path.rstrip('/')}/api/upload/chunk/{upload_id}/{index}"
         last_error: Exception | None = None
         for attempt in range(TRANSFER_ATTEMPTS):
-            connection = self._connection(parsed, timeout=90)
+            self._check_cancelled()
+            connection = self._connection(parsed, timeout=30)
             try:
                 connection.request(
                     "PUT",
@@ -409,17 +513,20 @@ class PPIOJobManager:
                 last_error = exc
             finally:
                 connection.close()
-            time.sleep(0.6 * (2**attempt))
+            self._cancel_event.wait(0.6 * (2**attempt))
         raise CloudLifecycleError(f"第 {index + 1} 个视频分片重试后仍失败：{last_error}")
 
     def _mirror_until_complete(self, remote_url: str) -> None:
         report_downloaded = False
         while True:
+            self._check_cancelled()
             status_code, remote = self._remote_request(remote_url, "GET", "/api/status")
             if status_code != 200:
                 raise CloudLifecycleError("无法读取云端分析进度")
             state = str(remote.get("state", ""))
             remote["execution_target"] = "cloud-on-demand"
+            remote["cloud_product_id"] = self.selected_product_id
+            remote["cloud_gpu_attempts"] = list(self.gpu_attempts)
             # The deployed image identifies the algorithm actually executed.
             # A code-overlay image can inherit an older API metadata constant.
             image_version = self.image.rsplit(":", 1)[-1]
@@ -451,7 +558,7 @@ class PPIOJobManager:
             self._write_json(self.status_path, remote)
             if state == "error":
                 raise CloudLifecycleError(str(remote.get("error", "云端分析失败")))
-            time.sleep(1.8)
+            self._cancel_event.wait(1.8)
 
     def _download_report(self, remote_url: str) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -485,8 +592,9 @@ class PPIOJobManager:
         if destination.suffix.lower() == ".mp4":
             self._download_video_ranged(remote_url, remote_path, destination, required=required)
             return
+        self._check_cancelled()
         parsed = urlparse(remote_url)
-        connection = self._connection(parsed, timeout=3600)
+        connection = self._connection(parsed, timeout=30)
         temporary = destination.with_name(f".{destination.name}.cloud-download")
         try:
             target = f"{parsed.path.rstrip('/')}{remote_path}"
@@ -503,6 +611,7 @@ class PPIOJobManager:
             destination.parent.mkdir(parents=True, exist_ok=True)
             with temporary.open("wb") as output:
                 while chunk := response.read(1024 * 1024):
+                    self._check_cancelled()
                     output.write(chunk)
             os.replace(temporary, destination)
         finally:
@@ -578,11 +687,13 @@ class PPIOJobManager:
     def _fetch_range(
         self, remote_url: str, remote_path: str, start: int, end: int
     ) -> tuple[int, str, bytes]:
+        self._check_cancelled()
         parsed = urlparse(remote_url)
         target = f"{parsed.path.rstrip('/')}{remote_path}"
         last_error: Exception | None = None
         for attempt in range(TRANSFER_ATTEMPTS):
-            connection = self._connection(parsed, timeout=90)
+            self._check_cancelled()
+            connection = self._connection(parsed, timeout=30)
             try:
                 connection.request(
                     "GET",
@@ -605,7 +716,7 @@ class PPIOJobManager:
                 last_error = exc
             finally:
                 connection.close()
-            time.sleep(0.6 * (2**attempt))
+            self._cancel_event.wait(0.6 * (2**attempt))
         raise CloudLifecycleError(f"云端视频分片重试后仍下载失败：{last_error}")
 
     def _upload_camera_profiles(self, remote_url: str) -> None:
@@ -665,6 +776,7 @@ class PPIOJobManager:
         body: bytes | None = None,
         headers: dict[str, str] | None = None,
     ) -> tuple[int, dict[str, Any]]:
+        self._check_cancelled()
         parsed = urlparse(remote_url)
         connection = self._connection(parsed, timeout=30)
         request_headers = {"Authorization": f"Bearer {self.shared_secret}"}
@@ -707,8 +819,11 @@ class PPIOJobManager:
             raise CloudLifecycleError(f"无法连接 PPIO：{exc.reason}") from exc
 
     def _release_orphan(self, instance_id: str) -> None:
-        if self._release_instance(instance_id):
+        released = self._release_instance(instance_id)
+        if released:
             self.runtime_path.unlink(missing_ok=True)
+        if self._cancel_event.is_set():
+            self._write_cancel_status(released)
 
     def _release_instance(self, instance_id: str) -> bool:
         try:
@@ -739,6 +854,8 @@ class PPIOJobManager:
                 "progress": progress,
                 "stage": stage,
                 "execution_target": "cloud-on-demand",
+                "cloud_product_id": self.selected_product_id,
+                "cloud_gpu_attempts": list(self.gpu_attempts),
             },
         )
 
@@ -850,7 +967,7 @@ class PPIOLiveJobManager(PPIOJobManager):
         replace_active: bool = False,
     ) -> dict[str, Any]:
         if not self.configured:
-            raise CloudLifecycleError("L40S 按需实时实验尚未配置完整")
+            raise CloudLifecycleError("云端显卡按需实时实验尚未配置完整")
         relay_url, relay_token = self._result_relay_config()
         if not relay_url or not relay_token:
             raise CloudLifecycleError("ECS 推理结果中继尚未配置完整")
@@ -872,7 +989,7 @@ class PPIOLiveJobManager(PPIOJobManager):
             initial = {
                 "session_id": self._local_session_id,
                 "state": "preparing",
-                "stage": "正在启动临时 L40S",
+                "stage": "正在申请临时云端显卡",
                 "source_time": 0.0,
                 "analysis_time": 0.0,
                 "events": [],
@@ -937,7 +1054,7 @@ class PPIOLiveJobManager(PPIOJobManager):
                 {
                     "session_id": local_session_id,
                     "state": "preparing",
-                    "stage": "L40S 已就绪，正在加载在线模型",
+                    "stage": f"{self.selected_product_id or self.product_id} 已就绪，正在加载在线模型",
                     "source_time": 0.0,
                     "analysis_time": 0.0,
                     "events": [],
@@ -998,6 +1115,8 @@ class PPIOLiveJobManager(PPIOJobManager):
                 payload["remote_session_id"] = remote_session_id
                 payload["session_id"] = local_session_id
                 payload["execution_target"] = "cloud-live-l40s"
+                payload["cloud_product_id"] = self.selected_product_id
+                payload["cloud_gpu_attempts"] = list(self.gpu_attempts)
                 payload["filename"] = upload_headers.get("X-Filename", clip.name)
                 self._write_json(self.status_path, payload)
                 if str(payload.get("state", "")) == "awaiting_stream":
@@ -1006,7 +1125,7 @@ class PPIOLiveJobManager(PPIOJobManager):
                     raise CloudLifecycleError(str(payload.get("error", "在线模型未能就绪")))
                 time.sleep(0.2)
             else:
-                raise CloudLifecycleError("L40S 在线模型准备超时")
+                raise CloudLifecycleError("云端在线模型准备超时")
 
             self._producer = self._start_camera_simulator(clip, stream_name, fps)
 
@@ -1034,7 +1153,7 @@ class PPIOLiveJobManager(PPIOJobManager):
                     continue
                 if payload is None:
                     if time.monotonic() >= relay_deadline:
-                        raise CloudLifecycleError("L40S 未向 ECS 上报推理结果")
+                        raise CloudLifecycleError("云端显卡未向 ECS 上报推理结果")
                     time.sleep(0.12)
                     continue
                 if payload.get("result_relay") != "ecs":
@@ -1044,16 +1163,18 @@ class PPIOLiveJobManager(PPIOJobManager):
                     last_relay_update = relay_update
                     relay_deadline = time.monotonic() + 20.0
                 elif time.monotonic() >= relay_deadline:
-                    raise CloudLifecycleError("ECS 上的 L40S 推理结果已停止更新")
+                    raise CloudLifecycleError("ECS 上的云端推理结果已停止更新")
                 payload["remote_session_id"] = remote_session_id
                 payload["session_id"] = local_session_id
                 payload["execution_target"] = "cloud-live-l40s"
+                payload["cloud_product_id"] = self.selected_product_id
+                payload["cloud_gpu_attempts"] = list(self.gpu_attempts)
                 payload["result_path"] = "l40s->ecs-result-relay->local"
                 payload["filename"] = upload_headers.get("X-Filename", clip.name)
                 self._write_json(self.status_path, payload)
                 remote_state = str(payload.get("state", ""))
                 if remote_state == "complete" and not source_finished:
-                    raise CloudLifecycleError("L40S 在摄像头仍推流时提前结束，已拒绝伪完成结果")
+                    raise CloudLifecycleError("云端显卡在摄像头仍推流时提前结束，已拒绝伪完成结果")
                 if remote_state in {"complete", "error", "stopped"}:
                     break
                 time.sleep(0.12)
@@ -1068,7 +1189,7 @@ class PPIOLiveJobManager(PPIOJobManager):
                 {
                     "session_id": local_session_id,
                     "state": "error",
-                    "stage": "L40S 实时实验未完成",
+                    "stage": "云端实时实验未完成",
                     "error": str(exc),
                     "events": [],
                     "event_cursor": 0,
@@ -1168,4 +1289,4 @@ class PPIOLiveJobManager(PPIOJobManager):
             headers={"Content-Type": "application/json", "Content-Length": str(len(body))},
         )
         if status >= 300 or not payload.get("finished"):
-            raise CloudLifecycleError(str(payload.get("error", "L40S 未确认摄像头流结束")))
+            raise CloudLifecycleError(str(payload.get("error", "云端未确认摄像头流结束")))

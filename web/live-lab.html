@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#150c20" />
   <meta name="description" content="Netcast TennisVision 实时落点实验台：把比赛视频按直播时间轴播放，并观察落点事件的确认延迟。" />
   <title>实时落点实验 · Netcast TennisVision</title>
-  <link rel="stylesheet" href="live-lab.css?v=20260917h" />
+  <link rel="stylesheet" href="live-lab.css?v=20260923speed" />
 </head>
 <body>
   <header class="lab-topbar">
@@ -64,6 +64,15 @@
           <div><span>画面 B</span><h2>实时分析结果</h2></div>
           <span class="engine-pill" id="enginePill"><i></i> 等待数据</span>
         </div>
+        <section class="speed-panel" aria-label="实时估算球速">
+          <div class="speed-heading"><span>球速 · SPEED</span><label><input id="showLiveSpeed" type="checkbox" checked /> 显示球速</label></div>
+          <div id="liveSpeedContent">
+            <div class="speed-current"><strong id="liveSpeedValue">—</strong><span>km/h</span><small id="liveSpeedHint">等待可靠轨迹</small></div>
+            <div class="speed-summary"><span>片段均值 <b id="liveSpeedMean">—</b></span><span>片段最高 <b id="liveSpeedMax">—</b></span><span>有效片段 <b id="liveSpeedCount">0</b></span></div>
+            <ol id="liveSpeedHistory" class="speed-history" aria-label="最近球速"></ol>
+            <p>估算值 · 短飞行片段速度，非击球初速；空白表示尚无可靠结果。</p>
+          </div>
+        </section>
         <div class="analysis-stage">
           <canvas id="landingCourt" aria-label="当前回合实时落点图"></canvas>
           <div class="analysis-empty" id="analysisEmpty"><i>⌁</i><strong>分析画面尚未开始</strong><span>落点只会在确认后出现，不会提前剧透</span></div>
@@ -135,14 +144,15 @@
       <div><span>开始前确认</span><h2>请确认球场四个底线角点</h2><p>这四点将直接用于 L40S 的落点坐标映射，不会只停留在预览画面。</p></div>
       <button type="button" id="liveCalibrationClose" aria-label="关闭">×</button>
     </div>
-    <div class="live-calibration-step"><strong id="liveCalibrationStep">第 1 步：点击近端左角</strong><button type="button" id="liveCalibrationReset">重新标记</button></div>
+    <p id="liveViewpoint" aria-live="polite"></p><div class="live-calibration-step"><strong id="liveCalibrationStep">第 1 步：点击近端左角</strong><button type="button" id="liveCalibrationReset">重新标记</button></div>
     <div class="live-calibration-canvas-wrap"><canvas id="liveCalibrationCanvas"></canvas></div>
-    <p class="live-calibration-order">顺序：近端左角 → 近端右角 → 远端右角 → 远端左角</p>
+    <p class="live-calibration-order">顺序：近端左角 → 近端右角 → 远端右角 → 远端左角。角点在画面外时，可点击四周留白。</p>
     <button class="live-calibration-confirm" id="liveCalibrationConfirm" type="button" disabled>确认球场，启动真实链路</button>
     <video id="liveCalibrationVideo" muted playsinline preload="metadata" hidden></video>
   </dialog>
 
   <div class="toast" id="labToast" role="status" aria-live="polite"></div>
-  <script src="live-lab.js?v=20260919a"></script>
+  <script src="viewpoint.js?v=2"></script>
+  <script src="live-lab.js?v=20260923speed"></script>
 </body>
 </html>

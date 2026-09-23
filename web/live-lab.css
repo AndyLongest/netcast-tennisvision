@@ -60,3 +60,8 @@ button,input { font:inherit; } button,label { -webkit-tap-highlight-color:transp
 .video-stage>img[hidden],.video-stage video[hidden] { display:none; }
 .measured-badge { margin-left:auto; padding:8px 11px; border:1px solid rgba(196,241,44,.2); border-radius:999px; color:#a99db5; background:rgba(196,241,44,.045); font-size:10px; }
 .measured-badge.live { color:var(--lime); }
+
+.speed-panel{margin:0 18px 16px;padding:16px 20px;border:1px solid #ded7ee;border-radius:16px;background:linear-gradient(120deg,#201331,#392052);color:#fff}
+.speed-heading{display:flex;justify-content:space-between;gap:12px;font-size:12px;letter-spacing:.08em;color:#d5c6e5}.speed-heading label{letter-spacing:0;display:flex;gap:6px;align-items:center}
+.speed-current{display:flex;align-items:baseline;gap:9px;margin:10px 0}.speed-current strong{font-size:54px;line-height:1;font-variant-numeric:tabular-nums;color:#d5ff65}.speed-current>span{font-size:15px;color:#d5c6e5}.speed-current small{margin-left:auto;font-size:12px;color:#d5c6e5}
+.speed-summary{display:flex;flex-wrap:wrap;gap:18px;font-size:12px;color:#d5c6e5}.speed-summary b{color:#fff;margin-left:5px}.speed-panel p{font-size:11px;line-height:1.5;color:#c5b4d5;margin:10px 0 0}.speed-history{display:flex;gap:8px;list-style:none;padding:0;margin:12px 0 0;flex-wrap:wrap}.speed-history li{background:#ffffff12;border-radius:7px;padding:5px 9px;font-size:12px}.speed-history time{color:#bcadca;font-size:10px;margin-right:5px}

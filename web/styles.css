@@ -93,3 +93,12 @@ body{background:linear-gradient(180deg,#f8f6fa 0,#f3f0f6 100%)}
 .history-item{display:grid;grid-template-columns:46px minmax(0,1fr) auto;align-items:center;gap:13px;padding:14px;border:1px solid #e8dfee;border-radius:15px;background:white;box-shadow:0 7px 22px rgba(47,20,65,.04)}.history-item-icon{width:46px;height:46px;border-radius:13px;background:linear-gradient(145deg,#eee3f6,#f7f2fa);color:#7431bd;display:grid;place-items:center;font-size:18px}.history-item-copy{min-width:0}.history-item-copy strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.history-item-copy span{display:block;margin-top:5px;color:#8b8091;font-size:8px}.history-item-copy em{color:#6f2cb8;font-style:normal}.history-item-actions{display:flex;gap:7px}.history-item-actions button{border:0;border-radius:9px;padding:8px 11px;font-size:9px;font-weight:750;cursor:pointer}.history-open{background:#7130c8;color:white}.history-delete{background:#f6eff7;color:#806d83}.history-delete:hover{background:#ffeded;color:#bd4545}
 @media(max-width:620px){.history-head{padding:24px 21px 19px}.history-summary{padding:11px 16px}.history-summary small{display:none}.history-list{padding:12px}.history-item{grid-template-columns:40px minmax(0,1fr);gap:10px}.history-item-icon{width:40px;height:40px}.history-item-actions{grid-column:1/-1}.history-item-actions button{flex:1}.history-dialog{max-height:calc(100dvh - 16px)}}
 @media(max-width:720px){.main-nav{display:flex;margin-left:auto;gap:0}.main-nav>:not(#historyBtn){display:none}#historyBtn{font-size:10px;padding:0 5px}.top-actions{margin-left:5px;gap:6px}}
+
+.processing-copy .stop-analysis { margin-top: 24px; color: #a22d3b; }
+.processing-copy .stop-hint { margin: 10px 0 0; font-size: 13px; line-height: 1.5; }
+.stop-analysis:disabled { opacity: .6; cursor: wait; }
+
+.compute-choice { display:flex; gap:12px; align-items:flex-start; margin-bottom:22px; padding:14px; border:1px solid #e5dbf3; border-radius:12px; cursor:pointer; }
+.compute-choice input { width:20px; height:20px; accent-color:#7c2bd5; flex-shrink:0; }
+.compute-choice span { font-weight:600; }
+.compute-choice small { display:block; margin-top:6px; color:#79837e; font-size:12px; line-height:1.6; font-weight:400; }

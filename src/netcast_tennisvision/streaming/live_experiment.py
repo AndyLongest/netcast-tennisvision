@@ -29,6 +29,10 @@ import cv2
 import numpy as np
 import torch
 
+from netcast_tennisvision.events.landing_detector import (
+    estimate_landing_subframe,
+    landing_candidate_meta,
+)
 from netcast_tennisvision.events.landing_event_detector import detect_landing_impulses
 from netcast_tennisvision.events.line_call import classify_line_call
 from netcast_tennisvision.paths import REPOSITORY_ROOT
@@ -237,6 +241,7 @@ class LiveExperimentSession:
         self._producer: subprocess.Popen[bytes] | None = None
         self._remote_webrtc_url = ""
         self._latest_jpeg: bytes | None = None
+        self._speed_worker = None
         self._events: list[dict[str, Any]] = []
         self._status: dict[str, Any] = {
             "session_id": self.id,
@@ -556,6 +561,10 @@ class LiveExperimentSession:
             spatial = min(width / 1280.0, height / 720.0)
 
             self._update(state="running", stage="真实链路在线分析中", started_at=producer_started)
+            from .speed_worker import LiveSpeedWorker
+            speed_enabled = os.environ.get("TENNISVISION_LIVE_SPEED", "1") != "0"
+            self._speed_worker = LiveSpeedWorker(self._update, enabled=speed_enabled)
+            self._update(speed={"enabled": speed_enabled, "count": 0, "recent": []})
             frames_meta: list[dict[str, Any]] = []
             frame_window: deque[np.ndarray] = deque(maxlen=SEQUENCE_LENGTH)
             pending_inputs: list[np.ndarray] = []
@@ -690,6 +699,8 @@ class LiveExperimentSession:
                     tracking_window, fps=fps, spatial=spatial, speed_scale=spatial,
                     frame_size=(width, height), play_mode="singles",
                 )
+                self._speed_worker.submit(tracking_window, window_start, fps,
+                                          (width, height), producer_started)
                 fixed_lag = max(10, round(0.35 * fps))
                 latest_decidable = len(frames_meta) - 1 - fixed_lag
                 if latest_decidable < 0:
@@ -697,6 +708,8 @@ class LiveExperimentSession:
                 impulses = detect_landing_impulses(
                     tracking_window, radius=8, min_score=0.52,
                     min_gap_frames=max(10, round(0.38 * fps)),
+                    candidate_filter=lambda proposal: landing_candidate_meta(
+                        proposal.frame, tracking_window, radius=8) is not None,
                 )
                 for impulse in impulses:
                     local_frame = int(impulse["frame"])
@@ -707,13 +720,19 @@ class LiveExperimentSession:
                     event_frame = int(meta.get("source_frame", timeline_frame))
                     if event_frame in emitted_frames:
                         continue
-                    point = meta.get("ball_px")
+                    context = landing_candidate_meta(local_frame, tracking_window, radius=8)
+                    if context is None:
+                        continue
+                    fit = estimate_landing_subframe(local_frame, tracking_window, radius=8)
+                    if window_start + fit["decision_frame"] >= len(frames_meta):
+                        continue
+                    point = fit.get("px") or context.get("ball_px")
                     if point is None or impulse.get("impulse_y_px_frame", 0.0) >= -0.15 * spatial:
                         continue
                     if inside_player_body(meta, np.asarray(point, dtype=float), spatial):
                         continue
                     world = cv2.perspectiveTransform(
-                        np.asarray([[point]], dtype=np.float32), image_to_world,
+                        np.asarray([[point]], dtype=np.float32), meta["M_inv"],
                     )[0, 0]
                     x, y = map(float, world)
                     # Keep a bounded apron so a genuine out ball remains observable.
@@ -733,10 +752,11 @@ class LiveExperimentSession:
                     player_id = "A" if hitter_side == "near" else "B"
                     player_colors = live_player_colors()
                     now = time.time()
-                    event_time = event_frame / fps
+                    touchdown_frame = event_frame + float(fit["frame_f"]) - local_frame
+                    event_time = touchdown_frame / fps
                     self._emit({
                         "id": len(self._events), "frame": event_frame,
-                        "touchdown_frame_f": float(event_frame),
+                        "touchdown_frame_f": touchdown_frame,
                         "decision_frame": int(frames_meta[-1].get("source_frame", len(frames_meta) - 1)),
                         "t": event_time, "x": x, "y": y,
                         "zone": "Out" if line.call == "out" else "在线候选",
@@ -903,6 +923,8 @@ class LiveExperimentSession:
 
             process_batch()
             reader_done.wait(timeout=2)
+            if self._speed_worker is not None:
+                self._speed_worker.close(drain=not self._stop.is_set())
             if self._stop.is_set():
                 self._update(state="stopped", stage="实验已停止")
             else:
@@ -940,6 +962,8 @@ class LiveExperimentSession:
             else:
                 self._fail(error)
         finally:
+            if self._speed_worker is not None:
+                self._speed_worker.close()
             if capture is not None:
                 capture.release()
             if stream_decoder is not None and stream_decoder.poll() is None:

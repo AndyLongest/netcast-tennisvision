@@ -1,5 +1,7 @@
 # Documentation map
 
+Optional pose configuration and rollback: [SERVE_POSE.md](SERVE_POSE.md).
+
 This page is the canonical index for repository documentation. New engineers and coding
 agents should start at `AGENTS.md`, then use this page instead of reading every document.
 

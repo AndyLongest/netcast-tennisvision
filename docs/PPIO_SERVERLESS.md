@@ -18,6 +18,41 @@ The first completed server measurement is recorded in
 number for capacity planning; its faster exact-video repeat intentionally includes
 persisted caches.
 
+## GPU inventory fallback
+
+The local lifecycle automatically tries `L40S.22c125g`, `L40S.28c125g`,
+`4090.16c125g`, `4090.16c62g`, then `4090.16c96g.v2` when creation explicitly reports
+insufficient inventory. This applies to normal uploads and live sessions. It is an
+availability priority, not a claim that each GPU is slower than the previous one.
+No smaller/unvalidated GPU, CPU execution or different region is selected automatically.
+The existing CUDA requirement, model image and one-GPU request remain intact.
+
+`TENNISVISION_PPIO_PRODUCT_ID` chooses the first product. A known default product starts
+at its position in that list; an unknown custom product has no implicit alternatives.
+`TENNISVISION_PPIO_FALLBACK_PRODUCTS` overrides the alternatives with comma-separated
+product IDs; an empty value disables fallback. Duplicates are removed, with at most
+eight candidates. Set these in the backend process environment before starting it.
+Each new job starts again at the preferred product.
+
+Each candidate gets its own root filesystem limit check. Explicit rootfs validation
+can retry once on the same product. Inventory rejection can then advance to the next
+product. Auth, balance, image, quota, timeout, network and missing-instance-ID errors
+stop immediately: ambiguous creation is not safe to repeat. Cancellation is checked
+between candidates. Exhaustion reports all attempted products and suggests retrying
+later or explicitly selecting local GPU; there is no automatic local execution.
+
+Progress names the attempted product. `cloud_product_id` records the chosen product
+and `cloud_gpu_attempts` records attempts. The legacy `cloud-live-l40s` execution-target
+string remains for client compatibility and must not be interpreted as hardware identity.
+Existing success/failure/stop cleanup and orphan journals still own the one created
+instance. Fallback does not create multiple GPUs in parallel. Live latency on alternative
+hardware still needs measurement; successful provisioning is not a realtime guarantee.
+
+The five default SKU IDs were verified against the provider product catalog on
+2026-09-21. Catalog availability hints are not treated as a guarantee; instance creation
+is authoritative. Automated tests simulate stock exhaustion and successful fallback
+without consuming cloud resources.
+
 ## Secret boundary
 
 Never commit API keys or registry passwords. The caller uses `PPIO_API_KEY` from the

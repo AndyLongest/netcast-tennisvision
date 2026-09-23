@@ -3,6 +3,14 @@
 This is the canonical first page for a new engineer or coding agent. The product owner
 should not need to explain the system again.
 
+## Performance testing preference
+
+The product owner requires all future performance, latency, backlog and real-time
+capacity evaluations to run on the cloud GPU server (confirmed 2026-09-23).
+Local unit/correctness tests remain useful, but local timing must not substitute
+for cloud latency evidence. Record actual GPU, transport, resolution, A/B settings
+and resource cleanup.
+
 ## Cloud execution lifecycle
 
 Production uploads are orchestrated by

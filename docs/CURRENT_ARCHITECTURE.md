@@ -1,7 +1,19 @@
 # Current production architecture
 
+Optional offline serve pose is controlled by `TENNISVISION_SERVE_POSE=off|shadow|on`.
+Default off has no pose model cost; shadow cannot change rally IDs. Experimental on
+uses observed wrist/ball co-motion, release, opposite-arm reach and outgoing flight
+to create serve boundaries, independently of the retired geometric candidate filter. Budget exhaustion or model
+failure returns no pose boundaries. See [SERVE_POSE.md](SERVE_POSE.md) for measured
+overhead, limits and rollback. Live workers and cloud images are unchanged.
+
 This document describes the only supported runtime path. Historical BallNet and tuning
 experiments are not runtime fallbacks.
+
+Cloud provisioning uses a bounded inventory fallback shared by uploaded analysis and
+live sessions: L40S.22c125g -> L40S.28c125g -> 4090.16c125g -> 4090.16c62g ->
+4090.16c96g.v2. Only an explicit inventory rejection advances the list. See
+[PPIO_SERVERLESS.md](PPIO_SERVERLESS.md) for configuration and failure handling.
 
 ## Input contract
 
@@ -21,6 +33,25 @@ experiments are not runtime fallbacks.
   height. Coordinates outside the video frame are also allowed; live transport
   still expresses coordinates relative to frame width and height.
   Automatic court proposals retain their existing false-positive filters.
+
+## Descriptive viewpoint classification
+
+`vision/viewpoint.py` is the sole classifier used by `POST /api/viewpoint` and report
+export. It consumes original-source normalized NL, NR, FR, FL corners and source size,
+never the padded annotation canvas or display-corrected coordinates. Version 2 labels
+low when baseline-midpoint vertical separation / image height <= 0.30 and high
+when > 0.30. There is no transition band, shape/roll/skew gate or user confirmation.
+Depth/width ratio is diagnostic only. Missing or invalid geometry is unavailable,
+not an extra view class. Outside-frame points remain allowed. This is the user-defined
+image-occupancy split, not a calibrated camera angle; source cropping/black bars can
+change it. Annotation gutters are excluded.
+
+This release only displays classification at manual confirmation and for the report's
+initial calibration. It does not route models, change tracking/landings/rallies, reject
+uploads, or classify every frame. All categories retain `analysis_path: existing`.
+The local relay can classify existing cloud reports without releasing a new GPU image.
+New notebook exports include `viewpoint` and `source_size`; old reports are classified
+locally from their saved original corners and video dimensions, or remain unknown.
 
 ## One-way data flow
 
@@ -61,6 +92,15 @@ after correction and stays crisp.
 
 ## Ball lifecycle
 
+Offline player identity combines OSNet with well-separated enrolled shirt colours.
+A clear single-player observation may identify the pair by exclusion; tiny or ambiguous
+crops cannot force a change. Shirt-supported changes require repeated evidence over
+at least 0.75 seconds and retain physical continuity checks when both positions exist.
+Sustained identity segments override an incorrectly merged rally's side majority.
+Display colours are frozen from enrollment, with dark-kit noise desaturated and similar
+kit colours separated by lightness. This metadata does not alter ball positions or times.
+Existing deployed cloud images require a new release to include these identity changes.
+
 - A coherent multi-frame hypothesis is required to create a ball track.
 - Perspective-aware search and a Kalman gate associate reachable candidates.
 - A missed frame coasts with increasing uncertainty instead of deleting the ball.
@@ -80,6 +120,21 @@ ballistic variants are summarized in `experiments/BALL_TRACKING_PATH.md`; none r
 a runtime fallback.
 
 ## Landing contract
+
+- Both low and high viewpoints use the same contact evidence path. Capturing the
+  exact ground-contact instant, or detecting the ball at the candidate frame, is
+  not required. A missing centre must be bracketed by real observations on the
+  same persistent track within the contact window, with at least three samples
+  on each side. A continuous upward-impulse fit must beat smooth flight before
+  it can supply an event-only touchdown coordinate. Predicted points never count
+  as support and the track is never rewritten. Court/player/racket and sequence
+  checks still apply; insufficient evidence remains undetected, not fabricated.
+- Offline impulse context and live workers share `landing_candidate_meta` and
+  `estimate_landing_subframe`. Live output uses the fitted fractional touchdown
+  time and the candidate's registered homography. A fit's `decision_frame` waits
+  for the last real observation used, not merely the third post-contact sample.
+  This source change requires a new cloud image for deployed workers; existing
+  reports are not reinterpreted and must be reanalysed.
 
 - Contact evidence combines trajectory impulse, adjacent flight arcs, court geometry,
   player/racket proximity, and optional audio timing.
@@ -249,13 +304,15 @@ an upward impulse and improvement over smooth flight. Tennis-rule consistency al
 not physical evidence of a landing.
 
 `events/rallies.py` assigns shared IDs after landing confirmation. Out/net/second-bounce
-outcomes close points; discarded candidates cannot bridge inactivity. The exported
-`rallies` timeline controls both the browser and baked minimap: the next hit clears old
-markers immediately, and dead time expires the preceding map after two seconds. For edited broadcasts, an optional visual score-panel detector also marks persistent
-numeric-column changes. It currently recognizes an opaque blue two-row panel at the
-lower left, excludes the speed badge/player names and requires 0.35 seconds of stable
-evidence. Unsupported layouts use contact segmentation; no OCR or new serve model is
-claimed. Missed/false contacts and unsupported score panels can still require review.
+outcomes close points; a subsequent racket hit starts the next point. A gap strictly longer than ten seconds
+between accepted contact events also starts a new point at the next hit. Score-panel
+changes never split points. Geometric serve proposals remain experimental and are not
+used as production boundaries: overhead returns produced false positives in demo3_clip. The exported `rallies` timeline controls
+both browser and baked minimaps: markers persist until the next point starts (or the
+video ends), without a two-second display expiry. The pipeline no longer scans the
+scoreboard. Missing terminal events can therefore merge points; false hits after a
+terminal event can start a point early. Existing reports retain their saved boundaries
+until reanalysis. Contact-recovery time windows do not define the final rally IDs.
 
 ## Report delivery and video rendering
 
@@ -432,3 +489,24 @@ scene retained 782 tracked frames, 8 bounces and 4 racket hits, and its SHA-256 
 exactly `c93f53b6748cb0f543ebf148202d7b879ed915b5c8dbf2c1e301044d9f2e3f5e`.
 
 Offline reports preserve decoder presentation timestamps in `frame_times` and contact `decision_t`. Browser frame selection uses this timeline, not only frame index divided by nominal fps. This preserves initial offsets and internal gaps without adding or interpolating ball observations.
+
+
+## Explicit analysis cancellation
+
+The ordinary analysis UI exposes force stop during processing and manual calibration.
+The relay cancels pending cloud work and stops/deletes the job's temporary PPIO instance;
+local execution terminates the pipeline process tree. Cancellation holds the single-job
+slot until the owner has exited and cleanup is confirmed. Failed cloud deletion retains
+the recovery journal and exposes a retry, never a successful cancellation. The browser
+settles any upload submission before stopping, invalidates old polling, and resets to a
+fresh upload only after `cancelled`. Archived reports remain available.
+
+
+### Optional report speed analysis
+
+`tracking/speed.py` owns read-only 3D flight speed estimates after contact analysis.
+The maintained notebook exports `speed_analysis`; the web client displays midpoint
+speed only for accepted windows. Default is gravity plus tennis quadratic drag;
+`TENNISVISION_SPEED_METHOD=gravity|off` provides rollback/disable. No ball observations
+or event timestamps are changed. Camera intrinsics assumptions and unmodelled spin
+limit accuracy; estimates are not radar-validated. See API_AND_SCHEMAS.md.

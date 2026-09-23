@@ -214,6 +214,10 @@ def request_manual_court_calibration(
 
 def main() -> None:
     write_status("running", 2, "正在加载冻结的网球、落点与球员身份模型（纯推理）")
+    if os.environ.get("TENNISVISION_REQUIRE_LOCAL_CUDA") == "1":
+        import torch
+        if not torch.cuda.is_available():
+            raise RuntimeError("本机显卡不可用，分析已停止；未回退到 CPU 或云端")
     verify_racketvision_balltrack()
     install_frozen_bounce_classifier()
     verify_player_identity_model()

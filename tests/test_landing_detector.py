@@ -1,4 +1,13 @@
-from netcast_tennisvision.events.landing_detector import estimate_landing_subframe
+import copy
+
+import numpy as np
+import pytest
+
+from netcast_tennisvision.events.landing_detector import (
+    estimate_landing_subframe,
+    landing_candidate_meta,
+)
+from netcast_tennisvision.events.landing_event_detector import detect_landing_impulses
 
 
 def _track(points, contact=5):
@@ -67,3 +76,43 @@ def test_camera_translation_does_not_change_inferred_contact():
         meta["ball_px"] = (points[i][0], points[i][1] + shift)
     result = estimate_landing_subframe(10, frames, radius=8)
     assert abs(result["frame_f"] - 8.4) < .15
+
+
+
+@pytest.mark.parametrize("vertical_scale", [.3, 1.0])
+@pytest.mark.parametrize("missing", [(), (10,), (9, 10, 11)])
+def test_contact_without_captured_touchdown_for_both_view_scales(vertical_scale, missing):
+    # Contact at 10.4, between native frames, with and without a detection hole.
+    points = [(200+3*t, 150+vertical_scale*(6*t+.05*t*t-12*max(t-10.4, 0)))
+              for t in range(24)]
+    frames = _track(points)
+    for i in missing:
+        frames[i].update(ball_px=None, ball_seen=False, ball_track_id=None)
+    before = copy.deepcopy(frames)
+    proposals = detect_landing_impulses(
+        frames, radius=7, min_score=.62,
+        candidate_filter=lambda p: landing_candidate_meta(p.frame, frames, radius=7) is not None)
+    assert len(proposals) == 1
+    fit = estimate_landing_subframe(proposals[0]['frame'], frames, radius=7)
+    assert abs(fit['frame_f']-10.4) < .15
+    expected = (231.2, 150+vertical_scale*(6*10.4+.05*10.4**2))
+    assert np.linalg.norm(np.array(fit['px'])-expected) < .3
+    assert fit['decision_frame'] >= proposals[0]['frame']+7
+    assert frames == before
+
+
+def test_missing_centre_cannot_join_tracks_or_use_predicted_tail():
+    frames = _track([(200+3*t, 150+6*t-12*max(t-10.4, 0)) for t in range(24)])
+    frames[10].update(ball_px=None, ball_seen=False, ball_track_id=None)
+    for m in frames[11:]:
+        m['ball_track_id'] = 5
+    assert landing_candidate_meta(10, frames, radius=7) is None
+    for m in frames[11:]:
+        m.update(ball_track_id=3, ball_seen=False)
+    assert landing_candidate_meta(10, frames, radius=7) is None
+
+
+def test_missing_point_smooth_flight_does_not_get_a_fabricated_location():
+    frames = _track([(200+3*t, 150+6*t+.05*t*t) for t in range(24)])
+    frames[10].update(ball_px=(999, 999), ball_seen=False)
+    assert landing_candidate_meta(10, frames, radius=7) is None

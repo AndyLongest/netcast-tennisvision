@@ -186,7 +186,7 @@ def plausible_ball_step(
 
 
 def camera_centre_from_homography(
-    matrix: np.ndarray, frame_size: tuple[int, int]
+    matrix: np.ndarray, frame_size: tuple[int, int], *, min_height: float = 1.5
 ) -> tuple[np.ndarray, float] | None:
     """Recover the calibrated camera centre from the court-plane homography."""
     width, height = frame_size
@@ -218,6 +218,6 @@ def camera_centre_from_homography(
     rotation = np.column_stack([r1, r2, np.cross(r1, r2)])
     u, _, vt = np.linalg.svd(rotation)
     centre = -(u @ vt).T @ translation
-    if not np.all(np.isfinite(centre)) or not 1.5 <= float(centre[2]) <= 30.0:
+    if not np.all(np.isfinite(centre)) or not min_height <= float(centre[2]) <= 30.0:
         return None
     return centre[:2], float(centre[2])

@@ -42,6 +42,7 @@ from .smoothing import (
 from .smoothing import (
     repair_isolated_midflight_backtracks as _repair_isolated_midflight_backtracks,
 )
+from .stationary import StationaryPrior, coherent_birth
 from .types import TrackerDiagnostics
 
 
@@ -64,6 +65,7 @@ def track_ball_persistent(
     search_score_slack: float = 0.0,
     speed_radius_gain: float = 0.65,
     play_mode: str = "match",
+    stationary_prior: bool = False,
 ) -> tuple[list[dict[str, Any]], TrackerDiagnostics]:
     """Track exactly one persistent physical ball through a native-rate clip.
 
@@ -79,6 +81,7 @@ def track_ball_persistent(
     training_mode = play_mode == "training"
 
     width, height = frame_size
+    stationary = StationaryPrior(fps, spatial) if stationary_prior else None
     transition = np.array(
         [[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=float
     )
@@ -157,10 +160,29 @@ def track_ball_persistent(
                       if -0.08 * width <= c[0] <= 1.08 * width
                       and -0.08 * height <= c[1] <= 1.08 * height]
         if not meta.get("is_court", False):
+            if stationary is not None:
+                stationary.reset()
             finish_active("camera_cut", frame)
             rejected_singletons += len(hypotheses)
             hypotheses = []
             continue
+
+        if stationary is not None:
+            flags = stationary.update(frame, [c[:2] for c in candidates])
+            kept = []
+            for candidate, is_static in zip(candidates, flags, strict=True):
+                point = np.asarray(candidate[:2], float)
+                player_launch = _near_player(meta, point, spatial)
+                crossing = False
+                if active is not None and frame-active['last_seen'] <= 1:
+                    velocity = active['state'][2:]
+                    crossing = (np.linalg.norm(velocity) > stationary.radius
+                                and np.linalg.norm(point-(active['state'][:2]+velocity))
+                                < 2*stationary.radius)
+                if not is_static or player_launch or crossing:
+                    kept.append(candidate)
+            meta['stationary_prior_rejected'] = len(candidates)-len(kept)
+            candidates = kept
 
         if active is not None:
             previous_state = active["state"].copy()
@@ -587,7 +609,8 @@ def track_ball_persistent(
         hypotheses.sort(key=lambda h: (len(h["obs"]), h["score"]), reverse=True)
         hypotheses = hypotheses[:hypothesis_beam]
         confirmed = next((h for h in hypotheses if len(h["obs"]) >= birth_hits and
-                          np.linalg.norm(h["obs"][-1][1] - h["obs"][0][1]) >= birth_span), None)
+                          np.linalg.norm(h["obs"][-1][1] - h["obs"][0][1]) >= birth_span
+                          and (stationary is None or coherent_birth(h['obs'], birth_span))), None)
         if confirmed is None:
             continue
         obs = {f: (float(p[0]), float(p[1]), float(conf)) for f, p, conf in confirmed["obs"]}

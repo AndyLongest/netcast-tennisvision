@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 
-from netcast_tennisvision.events.contact_view import point_in_contact_view
+from netcast_tennisvision.events.contact_view import contact_track_id, point_in_contact_view
 
 
 def _robust_polynomial(samples: list[tuple[float, np.ndarray, float]], degree: int):
@@ -54,12 +54,13 @@ def estimate_landing_subframe(
     if not 0 <= frame < len(frames_meta):
         raise IndexError(frame)
     centre = frames_meta[frame]
-    track_id = centre.get("ball_track_id")
-    fallback = centre.get("ball_px")
+    track_id = contact_track_id(frame, frames_meta, radius)
+    observed = bool(centre.get("ball_seen")) and centre.get("ball_px") is not None
+    fallback = centre.get("ball_px") if observed else None
     lo, hi = max(0, frame - radius), min(len(frames_meta), frame + radius + 1)
     before: list[tuple[float, np.ndarray, float]] = []
     after: list[tuple[float, np.ndarray, float]] = []
-    for index in range(lo, hi):
+    for index in range(lo, hi) if observed or track_id is not None else ():
         meta = frames_meta[index]
         point = meta.get("ball_px")
         if (point is None or not meta.get("ball_seen", False)
@@ -70,7 +71,7 @@ def estimate_landing_subframe(
         (before if index <= frame else after).append(sample)
 
     support = len(before) + len(after)
-    if len(before) < 3 or len(after) < 3 or fallback is None:
+    if len(before) < 3 or len(after) < 3:
         return {
             "frame_f": float(frame), "px": fallback, "confidence": "frame",
             "support": support, "decision_frame": min(len(frames_meta) - 1,
@@ -116,8 +117,15 @@ def estimate_landing_subframe(
                 "impulse_bic_gain": float(improvement),
                 "decision_frame": min(len(frames_meta) - 1, max(
                     frame + 1, ceil(frame_f) + confirmation_frames,
-                    int(after[2][0]))),
+                    int(after[-1][0]))),
             }
+
+    # Without a measured centre only a supported velocity impulse may supply a
+    # location. Two arbitrary fitted branches meeting is not sufficient evidence.
+    if not observed:
+        return {"frame_f": float(frame), "px": None, "confidence": "unlocated",
+                "support": support, "decision_frame": int(after[-1][0]),
+                "uncertainty_px": None, "branch_disagreement_px": None}
 
     degree_before = 2 if len(before) >= 5 else 1
     degree_after = 2 if len(after) >= 5 else 1
@@ -152,5 +160,22 @@ def estimate_landing_subframe(
         "uncertainty_px": uncertainty,
         # A landing is announced only after post-contact evidence exists.
         "decision_frame": min(len(frames_meta) - 1,
-                              max(frame + 1, ceil(frame_f) + confirmation_frames)),
+                              max(frame + 1, ceil(frame_f) + confirmation_frames,
+                                  int(after[-1][0]))),
     }
+
+
+def landing_candidate_meta(frame, frames_meta, *, radius=8):
+    """Read-only event geometry, including a fitted touchdown during occlusion.
+
+    This copy is used only for contact context and court projection, never inserted
+    into the track. Observed candidates retain their existing context coordinates.
+    Missing candidates must be bracketed within this window and pass impulse fitting.
+    """
+    centre = frames_meta[frame]
+    if centre.get("ball_seen") and centre.get("ball_px") is not None:
+        return centre
+    fit = estimate_landing_subframe(frame, frames_meta, radius=radius)
+    if fit.get("confidence") != "subframe" or fit.get("px") is None:
+        return None
+    return dict(centre, ball_px=fit["px"], landing_fit=fit)

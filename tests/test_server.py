@@ -284,3 +284,94 @@ def test_clear_all_analysis_records_preserves_non_runtime_data(tmp_path, monkeyp
     assert not (data / "video_identities.json").exists()
     assert server.read_json(data / "job_status.json")["state"] == "idle"
     assert json.loads((data / "camera_profiles.json").read_text(encoding="utf-8")) == {"keep": True}
+
+
+def test_force_stop_clears_stale_job_and_can_repeat(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "STATUS", tmp_path / "status.json")
+    monkeypatch.setattr(server, "CURRENT_JOB", tmp_path / "current.json")
+    monkeypatch.setattr(server, "cloud_manager", None)
+    monkeypatch.setattr(server, "job_process", None)
+    server.write_json_atomic(server.STATUS, {"state": "running", "progress": 36})
+    server.stop_analysis()
+    server.stop_analysis()
+    assert server.status_payload()["state"] == "cancelled"
+    assert server.resumable_job(None) is None
+
+
+def test_stop_kills_local_process_tree_before_clearing_state(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    calls = []
+    monkeypatch.setattr(server, "STATUS", tmp_path / "status.json")
+    monkeypatch.setattr(server, "cloud_manager", None)
+    process = SimpleNamespace(pid=123, poll=lambda: None, wait=lambda **_: calls.append("wait"))
+    monkeypatch.setattr(server, "job_process", process)
+    if os.name == "nt":
+        monkeypatch.setattr(server.subprocess, "run", lambda command, **_: calls.append(command))
+    else:
+        monkeypatch.setattr(server.os, "killpg", lambda *args: calls.append(args))
+    server.stop_analysis()
+    assert calls[-1] == "wait"
+    if os.name == "nt":
+        assert calls[0] == ["taskkill", "/PID", "123", "/T", "/F"]
+    assert server.job_process is None
+    assert server.read_json(server.STATUS)["state"] == "cancelled"
+
+def test_local_gpu_upload_bypasses_configured_cloud(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    for name in ('STATUS', 'CURRENT_JOB', 'LOG', 'VIDEO_IDENTITIES'):
+        monkeypatch.setattr(server, name, tmp_path / f'{name}.json')
+    monkeypatch.setattr(server, 'DATA', tmp_path)
+    monkeypatch.setattr(server, 'CLOUD_API_URL', 'https://cloud.invalid')
+    monkeypatch.setattr(server, 'job_process', None)
+    manager = SimpleNamespace(active=False, stopping=False, runtime_path=tmp_path / 'absent', start=Mock(), stop=Mock())
+    monkeypatch.setattr(server, 'cloud_manager', manager)
+    monkeypatch.setattr(server, 'require_local_gpu', lambda: 'test GPU')
+    monkeypatch.setattr(server, 'probe_native_fps', lambda _: 30.0)
+    monkeypatch.setattr(server, 'ffmpeg_directory', lambda: None)
+    popen = Mock(return_value=SimpleNamespace(pid=123, poll=lambda: 0))
+    monkeypatch.setattr(server.subprocess, 'Popen', popen)
+    handler = object.__new__(server.Handler)
+    handler.path = '/api/analyze'
+    handler.headers = {'Content-Length': '5', 'X-Filename': 'clip.mp4', 'X-Execution-Target': 'local-gpu'}
+    handler.rfile = io.BytesIO(b'video')
+    handler.send_json = Mock()
+    handler.cloud_request_authorized = lambda: True
+    handler.proxy_cloud_request = Mock()
+    handler.do_POST()
+    assert handler.send_json.call_args.args[1] == 202
+    assert handler.send_json.call_args.args[0]['execution_target'] == 'local-gpu'
+    assert popen.call_args.kwargs['env']['TENNISVISION_REQUIRE_LOCAL_CUDA'] == '1'
+    manager.start.assert_not_called()
+    handler.proxy_cloud_request.assert_not_called()
+    handler.path = '/api/court-calibration'
+    handler.save_court_calibration = Mock()
+    handler.do_POST()
+    handler.save_court_calibration.assert_called_once()
+    server.stop_analysis()
+    manager.stop.assert_not_called()
+    assert server.read_json(server.STATUS)['state'] == 'cancelled'
+
+
+def test_unavailable_local_gpu_rejects_without_upload_or_cloud(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+
+    monkeypatch.setattr(server, 'STATUS', tmp_path / 'status.json')
+    monkeypatch.setattr(server, 'CURRENT_JOB', tmp_path / 'current.json')
+    monkeypatch.setattr(server, 'cloud_manager', None)
+    monkeypatch.setattr(server, 'job_process', None)
+    monkeypatch.setattr(server, 'CLOUD_API_URL', '')
+    def unavailable():
+        raise ValueError('GPU unavailable')
+    monkeypatch.setattr(server, 'require_local_gpu', unavailable)
+    handler = object.__new__(server.Handler)
+    handler.path = '/api/analyze'
+    handler.headers = {'X-Execution-Target': 'local-gpu'}
+    handler.cloud_request_authorized = lambda: True
+    handler.send_json = Mock()
+    handler.do_POST()
+    assert handler.send_json.call_args.args[1] == 422
+    assert handler.send_json.call_args.args[0]['code'] == 'local_gpu_unavailable'
+    assert not server.CURRENT_JOB.exists()
