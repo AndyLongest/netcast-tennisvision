@@ -247,7 +247,7 @@ def analyze_exported_scene_speeds(scene, frame_size):
     if (
         not isinstance(corners, list) or len(corners) != 4
         or not isinstance(source, list) or not source
-        or not isinstance(fps, (int, float)) or not np.isfinite(fps) or fps <= 0
+        or not isinstance(fps, int | float) or not np.isfinite(fps) or fps <= 0
     ):
         return {"method": "court-camera-drag-v2", "status": "unavailable", "estimates": []}
     try:
