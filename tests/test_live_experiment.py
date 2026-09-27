@@ -4,9 +4,25 @@ from netcast_tennisvision.streaming.live_experiment import (
     LiveExperimentManager,
     _bounded_int_env,
     _camera_corners,
+    _incremental_event_context,
     _webrtc_origin,
     compare_landing_events,
 )
+
+
+def test_incremental_event_context_keeps_fit_and_nms_neighbours() -> None:
+    start, end = _incremental_event_context(
+        total_frames=96,
+        window_start=0,
+        last_scanned=47,
+        latest_decidable=63,
+        radius=8,
+        min_gap_frames=11,
+    )
+
+    assert (start, end) == (29, 83)
+    assert start <= 48 - 8 - 11
+    assert end >= 63 + 8 + 11 + 1
 
 
 def test_live_integer_tuning_is_bounded(monkeypatch) -> None:
@@ -109,6 +125,43 @@ def test_live_manager_accepts_an_external_camera_stream(monkeypatch) -> None:
     assert session.options["source_name"] == "court.mp4"
     assert session.options["court_corners"] == corners
     assert started == [session]
+
+
+def test_live_manager_can_keep_distinct_external_streams_when_sharing_is_enabled(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("TENNISVISION_LIVE_SHARED_INFERENCE", "1")
+    started = []
+
+    class FakeSession:
+        def __init__(self, _source, **options) -> None:
+            self.external_stream_name = options["external_stream_name"]
+            self.id = self.external_stream_name
+            self.state = "awaiting_stream"
+            self.stopped = False
+
+        def start(self) -> None:
+            started.append(self.id)
+
+        def snapshot(self) -> dict[str, str]:
+            return {"state": self.state}
+
+        def stop(self) -> None:
+            self.stopped = True
+
+    monkeypatch.setattr(
+        "netcast_tennisvision.streaming.live_experiment.LiveExperimentSession", FakeSession
+    )
+    manager = LiveExperimentManager()
+    first = manager.start_external_stream("court-a")
+    second = manager.start_external_stream("court-b")
+
+    assert first is not second
+    assert manager.start_external_stream("court-a") is first
+    assert manager.get(second.id) is second
+    assert manager.stop(first.id)
+    assert first.stopped and not second.stopped
+    assert started == ["court-a", "court-b"]
 
 
 def test_live_manager_finishes_only_the_named_camera_session(monkeypatch) -> None:

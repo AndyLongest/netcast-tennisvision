@@ -44,6 +44,18 @@ display-only perspective correction. Only one job runs at a time. A repeated req
 fingerprint reattaches; a different video receives `409 analysis_in_progress` and never
 overwrites the active clip.
 
+### `POST /api/analysis/stop`
+
+Force-stops the current ordinary analysis. Returns the latest status (202); poll
+`GET /api/status` until `cancelled`. `stopping` keeps the job slot occupied while
+in-flight transfers drain and the temporary PPIO GPU is stopped and deleted. A failed
+release returns `stop_failed`; calling stop again retries the journaled cleanup. New
+uploads remain blocked until cleanup succeeds. Local workers terminate their process
+tree before cancellation completes. Fixed-worker relays forward this endpoint; they
+stop the worker job but do not delete a separately administered permanent server.
+Completed analysis history is preserved. Browser upload submission is settled before
+sending stop, preventing a late upload from creating a job after cancellation.
+
 ### Local analysis history
 
 - `GET /api/history` returns completed analyses newest-first. Each record includes the
@@ -185,3 +197,74 @@ change must update `web/app.js`, the 3D exporter, frozen demo, manifest and test
 Offline reports preserve decoder presentation timestamps in `frame_times` and contact `decision_t`. Browser frame selection uses this timeline, not only frame index divided by nominal fps. This preserves initial offsets and internal gaps without adding or interpolating ball observations.
 
 `scoreboard_boundaries` lists native frames where persistent score-panel changes provide additional point boundaries. Unsupported panel layouts produce an empty list.
+
+### Per-upload local GPU selection
+
+`POST /api/analyze` accepts optional `X-Execution-Target: local-gpu`; omitted or `auto` preserves configured routing. Local selection validates CUDA in the server Python runtime (422 `local_gpu_unavailable` on failure), bypasses cloud provisioning, and runs the maintained pipeline with event overlays. Status/accepted responses identify `execution_target: local-gpu`. Calibration and force-stop follow that job target, including when PPIO is configured. Local means the computer hosting this API server, not a remote browser device. Requires NVIDIA drivers, CUDA PyTorch, installed project dependencies and model weights. No CPU/cloud fallback on failed CUDA validation.
+
+### Viewpoint metadata (descriptive only)
+
+`POST /api/viewpoint` accepts `{corners: [[x,y],...], width, height}` with four
+original-source normalized corners in NL, NR, FR, FL order. The local relay returns
+`version`, `category` (`low|high|unavailable`), `height_ratio`, `depth_width_ratio`,
+`reason`, and `analysis_path: existing`. No job or GPU is started. Missing/invalid
+geometry returns unavailable. Version 2 uses only <=30% low and >30% high. Bodies are limited to 4096 bytes.
+New `scene3d.json` exports contain the same `viewpoint` and `source_size: {width,height}`
+for the initial calibration. They are optional for older reports and have no effect on
+ball/event data or analysis routing.
+
+
+### Flight speed estimates (2026-09-23)
+
+Optional `scene.speed_analysis` uses `court-camera-gravity-v1`. `status` is
+`estimated` or `unavailable`; `estimates` contains bounded flight windows with
+`start_frame`, `end_frame`, `start_time_s`, `end_time_s`, `time_s`, `speed_kmh`,
+`observations`, `reprojection_median_px`, `camera_height_m` and
+`camera_elevation_to_court_centre_deg` (depression toward the court centre,
+not optical-axis pitch). Speed is the 3D velocity magnitude at window midpoint,
+not racket exit speed. `pixel_sensitivity_kmh` is a linearized two-sigma pixel
+noise sensitivity conditional on calibration/model; it is NOT a total accuracy
+bound or radar validation. Old reports omit this field and display unavailable.
+
+Both viewpoints use the same read-only method. Assumptions: centred principal
+point, square pixels, negligible lens distortion, short gravity-only flight.
+Court corners alone do not uniquely determine arbitrary camera intrinsics or
+instantaneous airborne depth. Lens calibration, drag/spin and court marking
+error remain systematic error sources. Reject short/gapped, ill-conditioned,
+nonphysical or poorly fitting trajectories. No new neural model or GPU pass.
+Pinned cloud images may omit this report extension. After a completed matching
+scene report, the trusted dispatcher can answer `GET /api/speed-analysis` by
+reconstructing observations from its exported scene and applying the maintained
+read-only speed fit against the original local video dimensions. The business
+server calls it only when `scene.speed_analysis` is absent. An unsuccessful fit
+returns `status=unavailable` and an empty `estimates` array; it must never invent
+a speed. This endpoint is for the trusted server-to-server path, not App clients.
+
+
+Speed v2 defaults to `court-camera-drag-v2`. Windows additionally export
+`drag_per_m` and `drag_sensitivity_kmh` (sensitivity to ±25% drag prior).
+Set `TENNISVISION_SPEED_METHOD=gravity` to restore v1 or `off` to emit
+`status=disabled`, `method=off`, `estimates=[]`. Default `drag` independently
+adapts the physical-reprojection approach documented in
+[open-source comparison](experiments/SPEED_OPEN_SOURCE_2026-09-23.md).
+It models tennis quadratic drag but not spin or wind; accuracy remains unverified
+against real speed ground truth. No additional Python package or model is needed.
+
+
+Speed calibration normalizes the projective matrix by its (2,2) entry before
+camera recovery. A homography and any nonzero scaled equivalent, including a
+negative multiple produced by matrix inversion, must yield identical speeds.
+Optional internal `diagnostics` counters record rejection reasons without changing
+returned scene schema or filtering thresholds. Regression includes signed scales.
+
+### Live speed status
+
+The trusted CPU dispatcher also accepts /api/live-lab/start with source=external_rtmp,
+stream_name (ASCII letters/digits, dash, underscore; at most 128 characters), fps and
+confirmed court_corners. In PPIO mode this provisions a worker subscribing to that
+existing business-media stream; it never launches the demo camera producer or replaces
+an active live session. The business API owns App authentication and result filtering.
+Final snapshots include resources_released; a false value retains the recovery journal
+and reports stop_failed. Playback remains independent of inference.
+
+Live snapshots optionally contain `speed`: `enabled`, `method`, `latest`, `recent` (last 30 accepted windows), `count`, `mean_kmh`, `max_kmh`, `metric`. Each accepted estimate additionally has `id`, `emitted_at`, `decision_t`, `delay_ms`. Times are source seconds except `emitted_at` (Unix seconds). Speed is km/h. This field is independent of landing events and their cursor. The frontend gates individual records by playback `decision_t`, expires the current value after three source seconds, and supports hiding the panel without disabling computation.

@@ -1,6 +1,9 @@
+import copy
+
 import numpy as np
 
 from netcast_tennisvision.tracking.world_tracker import (
+    BallTrackerContinuation,
     _ballistic_pixel_prediction,
     refine_touchdown_subframe,
     track_ball_persistent,
@@ -17,6 +20,49 @@ def _frames(count, observations):
 
 def _candidate(x, y, confidence=0.9):
     return (float(x), float(y), float(confidence), 0.0, 0.0)
+
+
+def test_incremental_tracker_matches_a_fresh_full_prefix_at_every_batch():
+    observations = {
+        **{frame: [_candidate(80 + 6 * frame, 80 + 2 * frame)] for frame in range(8)},
+        **{frame: [_candidate(80 + 6 * frame, 80 + 2 * frame)] for frame in range(16, 26)},
+        **{frame: [_candidate(420 - 7 * (frame - 32), 160)] for frame in range(32, 42)},
+    }
+    source = _frames(48, observations)
+    for frame in source:
+        frame["corners"] = np.array([[0, 240], [640, 240], [480, 40], [160, 40]], dtype=float)
+        frame["person_boxes"] = np.empty((0, 4), dtype=float)
+
+    incremental: list[dict] = []
+    continuation = BallTrackerContinuation()
+    compared_fields = (
+        "ball_px", "ball_px_raw", "ball_seen", "ball_state", "ball_track_id",
+        "ball_confidence", "ball_motion_mode", "ball_terminal_reason",
+        "ball_terminal_decision_frame",
+    )
+    for end in (5, 13, 21, 34, 48):
+        incremental.extend(copy.deepcopy(source[len(incremental):end]))
+        incremental_segments, incremental_diagnostics = track_ball_persistent(
+            incremental, fps=30.0, spatial=1.0, speed_scale=1.0,
+            frame_size=(640, 360), continuation=continuation,
+        )
+        fresh = copy.deepcopy(source[:end])
+        fresh_segments, fresh_diagnostics = track_ball_persistent(
+            fresh, fps=30.0, spatial=1.0, speed_scale=1.0, frame_size=(640, 360),
+        )
+
+        assert continuation.next_frame == end
+        assert incremental_diagnostics == fresh_diagnostics
+        assert len(incremental_segments) == len(fresh_segments)
+        for actual, expected in zip(incremental, fresh, strict=True):
+            for field in compared_fields:
+                if field in {"ball_px", "ball_px_raw"}:
+                    if actual[field] is None or expected[field] is None:
+                        assert actual[field] is expected[field]
+                    else:
+                        assert np.allclose(actual[field], expected[field], equal_nan=True)
+                else:
+                    assert actual[field] == expected[field]
 
 
 def test_tracker_accepts_any_positive_native_frame_rate():

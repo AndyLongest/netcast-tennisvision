@@ -59,6 +59,32 @@
       "download_url": "https://huggingface.co/kaiyangzhou/osnet/resolve/a5c5cc037c24235cda3b21085b93ad77c9616224/osnet_ain_x1_0_msmt17_256x128_amsgrad_ep50_lr0.0015_coslr_b64_fb10_softmax_labsmth_flip_jitter.pth"
     },
     {
+      "id": "racketvision-racketpose-rtmdet-m-epoch300",
+      "group": "racket_pose",
+      "path": "models/racketpose_rtmdet_m_epoch300.pth",
+      "size": 411293859,
+      "sha256": "e6ad74371259d844b11529a64b09052edaec4277ce9ebeeca64d77b9131a19cd",
+      "required": false,
+      "source": "OrcustD/RacketVision RTMDet-M racket detector epoch 300",
+      "source_url": "https://huggingface.co/linfeng302/RacketVision-Models/blob/a3760773233a0988c9605259743fbdd87c59d3a3/checkpoints/epoch_300.pth",
+      "license": "MIT",
+      "delivery": "download",
+      "download_url": "https://huggingface.co/linfeng302/RacketVision-Models/resolve/a3760773233a0988c9605259743fbdd87c59d3a3/checkpoints/epoch_300.pth"
+    },
+    {
+      "id": "racketvision-racketpose-rtmpose-m-epoch90",
+      "group": "racket_pose",
+      "path": "models/racketpose_rtmpose_m_epoch90.pth",
+      "size": 106524759,
+      "sha256": "faab22d4c8753759a6c6d4b48241e97b560f5a1b4374ba5cd4074932801a51e2",
+      "required": false,
+      "source": "OrcustD/RacketVision RTMPose-M five-keypoint estimator epoch 90",
+      "source_url": "https://huggingface.co/linfeng302/RacketVision-Models/blob/a3760773233a0988c9605259743fbdd87c59d3a3/checkpoints/best_PCK_epoch_90.pth",
+      "license": "MIT",
+      "delivery": "download",
+      "download_url": "https://huggingface.co/linfeng302/RacketVision-Models/resolve/a3760773233a0988c9605259743fbdd87c59d3a3/checkpoints/best_PCK_epoch_90.pth"
+    },
+    {
       "id": "validated-demo-source",
       "group": "demo",
       "path": "assets/demo/demo.mp4",

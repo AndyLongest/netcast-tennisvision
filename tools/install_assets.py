@@ -183,13 +183,16 @@ def install_one(asset: dict[str, Any], source_dir: Path | None, verify_only: boo
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--group", choices=["runtime", "demo", "all"], default="all")
+    parser.add_argument(
+        "--group", choices=["runtime", "demo", "racket_pose", "all"], default="all"
+    )
     parser.add_argument("--source-dir", type=Path, help="offline handoff directory")
     parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
     selected = [
         asset for asset in load_manifest()
-        if args.group == "all" or asset.get("group") == args.group
+        if (args.group == "all" and asset.get("required", True))
+        or asset.get("group") == args.group
     ]
     results = [install_one(asset, args.source_dir, args.verify_only) for asset in selected]
     if all(results):

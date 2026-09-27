@@ -6,6 +6,8 @@ create a ball by itself, and a missed detection does not make the ball disappear
 """
 from __future__ import annotations
 
+import copy
+from dataclasses import dataclass, field
 from math import floor, isfinite
 from typing import Any
 
@@ -42,7 +44,23 @@ from .smoothing import (
 from .smoothing import (
     repair_isolated_midflight_backtracks as _repair_isolated_midflight_backtracks,
 )
+from .stationary import StationaryPrior, coherent_birth
 from .types import TrackerDiagnostics
+
+
+@dataclass
+class BallTrackerContinuation:
+    """Forward tracker state retained between causal live batches.
+
+    The offline API still starts from an empty state and produces the same complete-clip
+    result.  A live caller may retain this object and append native frames to the same
+    ``frames_meta`` list.  Only the newly appended frames pass through association; a
+    read-only copy of the open tail is finalized for smoothing and event consumption.
+    """
+
+    next_frame: int = 0
+    config: tuple[Any, ...] | None = None
+    payload: dict[str, Any] = field(default_factory=dict)
 
 
 def track_ball_persistent(
@@ -64,6 +82,9 @@ def track_ball_persistent(
     search_score_slack: float = 0.0,
     speed_radius_gain: float = 0.65,
     play_mode: str = "match",
+    stationary_prior: bool = False,
+    continuation: BallTrackerContinuation | None = None,
+    output_start: int = 0,
 ) -> tuple[list[dict[str, Any]], TrackerDiagnostics]:
     """Track exactly one persistent physical ball through a native-rate clip.
 
@@ -77,6 +98,9 @@ def track_ball_persistent(
     if play_mode not in {"match", "singles", "doubles", "training"}:
         raise ValueError(f"unsupported play mode: {play_mode!r}")
     training_mode = play_mode == "training"
+
+    if not 0 <= output_start <= len(frames_meta):
+        raise ValueError("output_start must be inside frames_meta")
 
     width, height = frame_size
     transition = np.array(
@@ -118,20 +142,57 @@ def track_ball_persistent(
     net_band = max(12.0 * spatial, 0.025 * height)
     exit_margin = max(12.0 * spatial, 0.025 * min(width, height))
 
-    raw_segments: list[dict[str, Any]] = []
-    active: dict[str, Any] | None = None
-    hypotheses: list[dict[str, Any]] = []
-    next_track_id = 0
-    confirmed_births = rejected_singletons = occluded_frames = rejected_teleports = 0
-    adaptive_search_recoveries = net_terminations = frame_exit_terminations = 0
-    bounce_velocity_resets = player_hit_velocity_resets = curved_flight_rejections = 0
+    config = (
+        float(fps), float(spatial), float(speed_scale), tuple(map(int, frame_size)),
+        float(chi2_gate), float(hard_cap), float(confidence_bonus), float(min_track_span),
+        tuple(search_radii), tuple(search_confidences), float(search_score_slack),
+        float(speed_radius_gain), play_mode, bool(stationary_prior),
+    )
+    if continuation is not None and continuation.config not in (None, config):
+        raise ValueError("live tracker continuation cannot change configuration")
+    if continuation is not None and continuation.next_frame > len(frames_meta):
+        raise ValueError("live tracker continuation cannot move backwards")
+
+    if continuation is not None and continuation.payload:
+        state = continuation.payload
+        stationary = state["stationary"]
+        raw_segments = state["raw_segments"]
+        active = state["active"]
+        hypotheses = state["hypotheses"]
+        next_track_id = state["next_track_id"]
+        confirmed_births = state["confirmed_births"]
+        rejected_singletons = state["rejected_singletons"]
+        occluded_frames = state["occluded_frames"]
+        rejected_teleports = state["rejected_teleports"]
+        adaptive_search_recoveries = state["adaptive_search_recoveries"]
+        net_terminations = state["net_terminations"]
+        frame_exit_terminations = state["frame_exit_terminations"]
+        bounce_velocity_resets = state["bounce_velocity_resets"]
+        player_hit_velocity_resets = state["player_hit_velocity_resets"]
+        curved_flight_rejections = state["curved_flight_rejections"]
+        search_radius_used = state["search_radius_used"]
+        search_speed_used = state["search_speed_used"]
+        search_centre_used = state["search_centre_used"]
+        search_axes_used = state["search_axes_used"]
+        motion_mode_used = state["motion_mode_used"]
+        first_new_frame = continuation.next_frame
+    else:
+        stationary = StationaryPrior(fps, spatial) if stationary_prior else None
+        raw_segments: list[dict[str, Any]] = []
+        active: dict[str, Any] | None = None
+        hypotheses: list[dict[str, Any]] = []
+        next_track_id = 0
+        confirmed_births = rejected_singletons = occluded_frames = rejected_teleports = 0
+        adaptive_search_recoveries = net_terminations = frame_exit_terminations = 0
+        bounce_velocity_resets = player_hit_velocity_resets = curved_flight_rejections = 0
+        search_radius_used: dict[int, float] = {}
+        search_speed_used: dict[int, float] = {}
+        search_centre_used: dict[int, tuple[float, float]] = {}
+        search_axes_used: dict[int, tuple[float, float]] = {}
+        motion_mode_used: dict[int, str] = {}
+        first_new_frame = 0
     midflight_backtrack_repairs = 0
     ballistic_predictions = 0
-    search_radius_used: dict[int, float] = {}
-    search_speed_used: dict[int, float] = {}
-    search_centre_used: dict[int, tuple[float, float]] = {}
-    search_axes_used: dict[int, tuple[float, float]] = {}
-    motion_mode_used: dict[int, str] = {}
 
     def finish_active(reason: str, decision_frame: int | None = None) -> None:
         nonlocal active
@@ -152,15 +213,35 @@ def track_ball_persistent(
             raw_segments.append(segment)
         active = None
 
-    for frame, meta in enumerate(frames_meta):
+    for frame in range(first_new_frame, len(frames_meta)):
+        meta = frames_meta[frame]
         candidates = [c for c in meta.get("candidates", ())
                       if -0.08 * width <= c[0] <= 1.08 * width
                       and -0.08 * height <= c[1] <= 1.08 * height]
         if not meta.get("is_court", False):
+            if stationary is not None:
+                stationary.reset()
             finish_active("camera_cut", frame)
             rejected_singletons += len(hypotheses)
             hypotheses = []
             continue
+
+        if stationary is not None:
+            flags = stationary.update(frame, [c[:2] for c in candidates])
+            kept = []
+            for candidate, is_static in zip(candidates, flags, strict=True):
+                point = np.asarray(candidate[:2], float)
+                player_launch = _near_player(meta, point, spatial)
+                crossing = False
+                if active is not None and frame-active['last_seen'] <= 1:
+                    velocity = active['state'][2:]
+                    crossing = (np.linalg.norm(velocity) > stationary.radius
+                                and np.linalg.norm(point-(active['state'][:2]+velocity))
+                                < 2*stationary.radius)
+                if not is_static or player_launch or crossing:
+                    kept.append(candidate)
+            meta['stationary_prior_rejected'] = len(candidates)-len(kept)
+            candidates = kept
 
         if active is not None:
             previous_state = active["state"].copy()
@@ -587,7 +668,8 @@ def track_ball_persistent(
         hypotheses.sort(key=lambda h: (len(h["obs"]), h["score"]), reverse=True)
         hypotheses = hypotheses[:hypothesis_beam]
         confirmed = next((h for h in hypotheses if len(h["obs"]) >= birth_hits and
-                          np.linalg.norm(h["obs"][-1][1] - h["obs"][0][1]) >= birth_span), None)
+                          np.linalg.norm(h["obs"][-1][1] - h["obs"][0][1]) >= birth_span
+                          and (stationary is None or coherent_birth(h['obs'], birth_span))), None)
         if confirmed is None:
             continue
         obs = {f: (float(p[0]), float(p[1]), float(conf)) for f, p, conf in confirmed["obs"]}
@@ -609,6 +691,47 @@ def track_ball_persistent(
         confirmed_births += 1
         rejected_singletons += max(0, len(hypotheses) - 1)
         hypotheses = []
+
+    if continuation is not None:
+        # Preserve the causal forward state before the read-only snapshot below closes
+        # and smooths the open segment.  Deep-copy only the structures that finalization
+        # mutates; diagnostic lookup maps are read-only after the forward pass.
+        continuation.config = config
+        continuation.next_frame = len(frames_meta)
+        continuation.payload = {
+            "stationary": stationary,
+            "raw_segments": raw_segments,
+            "active": active,
+            "hypotheses": hypotheses,
+            "next_track_id": next_track_id,
+            "confirmed_births": confirmed_births,
+            "rejected_singletons": rejected_singletons,
+            "occluded_frames": occluded_frames,
+            "rejected_teleports": rejected_teleports,
+            "adaptive_search_recoveries": adaptive_search_recoveries,
+            "net_terminations": net_terminations,
+            "frame_exit_terminations": frame_exit_terminations,
+            "bounce_velocity_resets": bounce_velocity_resets,
+            "player_hit_velocity_resets": player_hit_velocity_resets,
+            "curved_flight_rejections": curved_flight_rejections,
+            "search_radius_used": search_radius_used,
+            "search_speed_used": search_speed_used,
+            "search_centre_used": search_centre_used,
+            "search_axes_used": search_axes_used,
+            "motion_mode_used": motion_mode_used,
+        }
+        snapshot_segments = raw_segments
+        if output_start > 0:
+            # Only segments that can still overlap the requested output or bridge into it
+            # can affect this live snapshot. Older segments stay in the causal state.
+            earliest_relevant = output_start - max_bridge_occlusion - 1
+            snapshot_segments = [
+                segment for segment in raw_segments
+                if segment["frames"][-1] >= earliest_relevant
+            ]
+        raw_segments = copy.deepcopy(snapshot_segments)
+        active = copy.deepcopy(active)
+        hypotheses = copy.deepcopy(hypotheses)
 
     finish_active("end_of_clip", len(frames_meta) - 1)
     rejected_singletons += len(hypotheses)
@@ -673,7 +796,7 @@ def track_ball_persistent(
             segment, frames_meta, spatial
         )
 
-    for meta in frames_meta:
+    for meta in frames_meta[output_start:]:
         meta["ball_px"] = None
         meta["ball_px_raw"] = None
         meta["ball_seen"] = False
@@ -690,6 +813,8 @@ def track_ball_persistent(
         meta["ball_terminal_decision_frame"] = None
     for segment in merged:
         for i, (frame, state) in enumerate(zip(segment["frames"], segment["smooth"], strict=False)):
+            if frame < output_start:
+                continue
             meta = frames_meta[frame]
             meta["ball_px"] = (float(state[0]), float(state[1]))
             raw = segment["meas"][i]

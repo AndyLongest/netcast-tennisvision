@@ -15,7 +15,7 @@ from typing import Any
 
 import numpy as np
 
-from netcast_tennisvision.events.contact_view import point_in_contact_view
+from netcast_tennisvision.events.contact_view import contact_track_id, point_in_contact_view
 
 
 def racket_confounded_landing(landing, contacts, *, fps):
@@ -89,7 +89,9 @@ def score_landing_impulse(
     if not 0 <= frame < len(frames_meta):
         return None
     centre = frames_meta[frame]
-    track_id = centre.get("ball_track_id")
+    track_id = contact_track_id(frame, frames_meta, radius)
+    if track_id is None and not centre.get("ball_seen"):
+        return None
     samples = []
     for index in range(max(0, frame - radius), min(len(frames_meta), frame + radius + 1)):
         meta = frames_meta[index]

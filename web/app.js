@@ -44,7 +44,7 @@ const STAGE_MESSAGES = [
   [76, '正在确认击球与落地…', '按回合核验落点与界内外状态'],
   [92, '正在生成可视化报告…', '整理回放、落点地图与三维场景'],
 ];
-const ACTIVE_BACKEND_STATES = new Set(['queued', 'running', 'needs_court_calibration', 'report_ready']);
+const ACTIVE_BACKEND_STATES = new Set(['queued', 'running', 'needs_court_calibration', 'report_ready', 'stopping', 'stop_failed']);
 const ANALYSIS_VERSION = 'production-v30';
 
 let state = {
@@ -61,6 +61,9 @@ let reportLoadToken = 0;
 let demoSceneCache = globalThis.TENNIS_DEMO_SCENE || null;
 let calibrationPromise = null;
 let backendRunToken = 0;
+let backendSubmission = null;
+let stopInFlight = false;
+let dismissCalibration = null;
 const DEMO_SCENE_CACHE_KEY = 'netcast-demo-scene-v3';
 
 function formatTime(seconds) {
@@ -87,14 +90,19 @@ async function requestCourtCalibration(calibration) {
     const labels = calibration.point_order || ['近端左角', '近端右角', '远端右角', '远端左角'];
     const points = [];
     let displayScale = 1;
+    let marginX = 0, marginY = 0;
 
     const redraw = () => {
       if (!image.naturalWidth) return;
       const maxWidth = Math.min(800, dialog.clientWidth - 52);
-      displayScale = Math.min(1, maxWidth / image.naturalWidth);
-      canvas.width = Math.round(image.naturalWidth * displayScale);
-      canvas.height = Math.round(image.naturalHeight * displayScale);
-      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+      displayScale = Math.min(1, maxWidth / (image.naturalWidth * 1.3));
+      const imageWidth = image.naturalWidth * displayScale, imageHeight = image.naturalHeight * displayScale;
+      marginX = imageWidth * 0.15; marginY = imageHeight * 0.15;
+      canvas.width = Math.round(imageWidth * 1.3);
+      canvas.height = Math.round(imageHeight * 1.3);
+      ctx.fillStyle = '#302738'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.save(); ctx.translate(marginX, marginY);
+      ctx.drawImage(image, 0, 0, imageWidth, imageHeight);
       if (points.length > 1) {
         ctx.strokeStyle = '#c4f12c'; ctx.lineWidth = 2; ctx.setLineDash([7, 5]);
         ctx.beginPath();
@@ -106,7 +114,7 @@ async function requestCourtCalibration(calibration) {
       }
       if (points.length === 4) {
         const project = courtProjector(points.map(([x, y]) =>
-          [x / image.naturalWidth, y / image.naturalHeight]), canvas.width, canvas.height);
+          [x / image.naturalWidth, y / image.naturalHeight]), imageWidth, imageHeight);
         if (project) {
           ctx.strokeStyle = '#c4f12c'; ctx.lineWidth = 1.5; ctx.beginPath();
           const lines = [[1.37, 0, 1.37, 23.77], [9.60, 0, 9.60, 23.77],
@@ -125,22 +133,27 @@ async function requestCourtCalibration(calibration) {
         ctx.fillStyle = '#25143a'; ctx.font = '700 10px system-ui';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(index + 1), x, y);
       });
+      ctx.restore();
       $('#calibrationStep').textContent = points.length < 4
         ? `第 ${points.length + 1} 步：点击${labels[points.length]}`
         : '四个角点已标记，请检查发球线、单打边线是否与画面重合';
       $('#calibrationSubmit').disabled = points.length !== 4;
+      showCourtViewpoint($('#calibrationViewpoint'), points.map(([x, y]) =>
+        [x / image.naturalWidth, y / image.naturalHeight]), image.naturalWidth, image.naturalHeight);
     };
 
     $('#calibrationReason').textContent = calibration.reason || '自动识别没有达到可靠标准，请确认四个底线角点。';
-    image.onload = () => { dialog.showModal(); redraw(); };
+    let dismissed = false;
+    dismissCalibration = () => { dismissed = true; dialog.close(); resolve(); };
+    image.onload = () => { if (!dismissed) { dialog.showModal(); redraw(); } };
     image.onerror = () => reject(new Error('无法读取球场确认画面'));
     image.src = `${calibration.preview}?v=${encodeURIComponent(calibration.request_id)}`;
     canvas.onclick = (event) => {
       if (points.length >= 4 || !image.naturalWidth) return;
       const rect = canvas.getBoundingClientRect();
       points.push([
-        (event.clientX - rect.left) * image.naturalWidth / rect.width,
-        (event.clientY - rect.top) * image.naturalHeight / rect.height,
+        ((event.clientX - rect.left) * canvas.width / rect.width - marginX) / displayScale,
+        ((event.clientY - rect.top) * canvas.height / rect.height - marginY) / displayScale,
       ]);
       redraw();
     };
@@ -160,7 +173,7 @@ async function requestCourtCalibration(calibration) {
         $('#calibrationSubmit').disabled = false; toast(error.message);
       }
     };
-  }).finally(() => { calibrationPromise = null; });
+  }).finally(() => { calibrationPromise = null; dismissCalibration = null; });
   return calibrationPromise;
 }
 
@@ -345,7 +358,7 @@ function resetForNextAnalysis({ announce = false } = {}) {
   const overlay = $('#eventOverlay');
   overlay.getContext('2d').clearRect(0, 0, overlay.width, overlay.height);
   $('#replayPending').hidden = true;
-  $('#replayDescription').textContent = '轨迹、球员、球场和落地区域已经叠加';
+  $('#replayDescription').textContent = '网球位置、球员、球场和落地区域已经叠加';
   $('#sceneFrame').src = 'about:blank';
   $('#videoInput').value = '';
   $$('.event-filter button').forEach((button, index) => button.classList.toggle('active', index === 0));
@@ -403,6 +416,7 @@ function adoptBackendJob(status, { resumed = false } = {}) {
     eventOverlayReady: Boolean(status.event_overlay_ready),
     reportVisible: false,
     renderingVideo: status.state === 'report_ready',
+    executionTarget: status.execution_target,
     jobId: status.job_id || null,
     videoFingerprint: status.video_fingerprint || null,
     displayCorrection: status.display_correction || { enabled: false, strength: 0, corners: null },
@@ -411,7 +425,9 @@ function adoptBackendJob(status, { resumed = false } = {}) {
   setView('processing');
   updateStages(Number(status.progress) || 0);
   $('#processingMessage').textContent = status.stage || '正在继续分析这场比赛…';
-  $('#timeHint').textContent = resumed
+  $('.processing-proof span').textContent = status.execution_target === 'local-gpu'
+    ? '本机正在分析，请保持电脑和服务运行' : '云端分析会继续，完成后自动释放算力';
+  $('#timeHint').textContent = status.execution_target === 'local-gpu' ? '使用本机 NVIDIA 显卡分析，不创建云端 GPU' : resumed
     ? '已接回上次进度，无需重新上传'
     : 'GPU 仅在本次任务期间启用，完成后自动释放';
 }
@@ -420,6 +436,13 @@ async function monitorBackendJob(initialStatus, token, { resumed = false } = {})
   let status = initialStatus;
   adoptBackendJob(status, { resumed });
   while (token === backendRunToken) {
+    if (status.state === 'cancelled') { finishStoppedAnalysis(); return; }
+    $('#reportStopBtn').hidden = status.state !== 'report_ready';
+    const stopping = status.state === 'stopping';
+    $$('.stop-analysis').forEach((button) => {
+      button.disabled = stopping || stopInFlight;
+      button.textContent = stopping ? (status.execution_target === 'local-gpu' ? '正在停止本机分析…' : '正在释放云端算力…') : status.state === 'stop_failed' ? '重试强制停止' : '强制停止';
+    });
     updateStages(Number(status.progress) || 0);
     if (status.state === 'report_ready') {
       state.renderingVideo = true;
@@ -449,6 +472,45 @@ async function monitorBackendJob(initialStatus, token, { resumed = false } = {})
     status = await response.json();
   }
 }
+
+function finishStoppedAnalysis() {
+  backendRunToken += 1;
+  dismissCalibration?.();
+  clearInterval(demoTimer);
+  clearTimeout(demoResultTimer);
+  state.renderingVideo = false;
+  setView('welcome');
+  resetForNextAnalysis();
+  toast('分析已停止，可以上传新视频');
+}
+
+async function stopAnalysis() {
+  if (stopInFlight) return;
+  stopInFlight = true;
+  backendRunToken += 1;
+  reportLoadToken += 1;
+  dismissCalibration?.();
+  $$('.stop-analysis').forEach((button) => { button.disabled = true; button.textContent = '正在停止…'; });
+  try {
+    if (state.isDemo) { finishStoppedAnalysis(); return; }
+    // Finish the already-sent submission before stopping, so it cannot start a job afterwards.
+    if (backendSubmission) await backendSubmission.catch(() => {});
+    const response = await fetch(apiUrl('/api/analysis/stop'), { method: 'POST' });
+    const status = await response.json();
+    if (!response.ok) throw new Error(status.error || '停止请求失败');
+    stopInFlight = false;
+    await monitorBackendJob(status, backendRunToken, { resumed: true });
+  } catch (error) {
+    setView('processing');
+    $('#processingMessage').textContent = '尚未确认停止，请重试';
+    $('#timeHint').textContent = error.message;
+    toast('尚未确认任务已停止，请重试强制停止');
+  } finally {
+    stopInFlight = false;
+    $$('.stop-analysis').forEach((button) => { button.disabled = false; button.textContent = '强制停止'; });
+  }
+}
+$$('.stop-analysis').forEach((button) => button.addEventListener('click', stopAnalysis));
 
 const correctionPreview = {
   frame: document.createElement('canvas'),
@@ -708,8 +770,11 @@ function correctedTarget(points, strength) {
 function renderCorrectionPreview() {
   const canvas = $('#correctionPreviewCanvas'), source = correctionPreview.frame;
   if (!source.width) return;
-  canvas.width = source.width; canvas.height = source.height;
+  const markingMargin = correctionPreview.marking ? 0.15 : 0;
+  canvas.width = Math.round(source.width * (1 + 2 * markingMargin));
+  canvas.height = Math.round(source.height * (1 + 2 * markingMargin));
   const ctx = canvas.getContext('2d'); ctx.fillStyle = '#130d1b'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.save(); ctx.translate(source.width * markingMargin, source.height * markingMargin);
   if (!correctionPreview.corrected || correctionPreview.marking || correctionPreview.points.length !== 4) {
     ctx.drawImage(source, 0, 0);
   } else {
@@ -747,6 +812,7 @@ function renderCorrectionPreview() {
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(index + 1), point[0], point[1]);
     });
   }
+  ctx.restore();
   $('#correctionValue').textContent = `${correctionPreview.strength}%`;
   $('#correctionPreviewBadge').textContent = correctionPreview.corrected ? `${correctionPreview.strength}% 矫正` : '原始画面';
   $$('.correction-presets button').forEach((button) => button.classList.toggle('active', Number(button.dataset.strength) === correctionPreview.strength));
@@ -838,13 +904,19 @@ function startAnalysis() {
 
 async function runBackendAnalysis() {
   const token = ++backendRunToken;
+  const localGpu = $('#localGpuToggle').checked;
+  $('.processing-proof span').textContent = localGpu ? '本机正在分析，请保持电脑和服务运行' : '云端分析会继续，完成后自动释放算力';
   try {
     $('#processingMessage').textContent = '视频已收到，正在准备分析…';
-    $('#timeHint').textContent = '比赛视频将安全上传至 GPU 服务器分析';
+    $('#timeHint').textContent = localGpu ? '使用本机 NVIDIA 显卡，正在检查运行环境' : '比赛视频将安全上传至 GPU 服务器分析';
     const health = await fetch(apiUrl('/api/status'), { cache: 'no-store' });
-    if (!health.ok) throw new Error('云端分析服务尚未就绪，请稍后重试');
+    if (!health.ok) throw new Error('分析服务尚未就绪，请稍后重试');
     const current = await health.json();
+    if (localGpu && !current.local_gpu_selection_supported) {
+      throw new Error('当前后台尚不支持本机显卡选择，请重启本地服务后再试');
+    }
     const fingerprint = await videoFingerprint(state.file);
+    if (token !== backendRunToken) return;
 
     if (ACTIVE_BACKEND_STATES.has(current.state)) {
       const sameVideo = !current.video_fingerprint || current.video_fingerprint === fingerprint;
@@ -856,17 +928,19 @@ async function runBackendAnalysis() {
 
     if (current.state === 'complete'
         && current.video_fingerprint === fingerprint
-        && current.algorithm_version === ANALYSIS_VERSION) {
+        && current.algorithm_version === ANALYSIS_VERSION
+        && (current.execution_target === 'local-gpu') === localGpu) {
       adoptBackendJob(current, { resumed: true });
       toast('这段视频已经分析完成，正在打开报告');
       await monitorBackendJob(current, token, { resumed: true });
       return;
     }
 
-    const response = await fetch(apiUrl('/api/analyze'), {
+    backendSubmission = fetch(apiUrl('/api/analyze'), {
       method: 'POST',
       headers: {
         'Content-Type': state.file.type || 'application/octet-stream',
+        'X-Execution-Target': localGpu ? 'local-gpu' : 'auto',
         'X-Filename': encodeURIComponent(state.file.name),
         'X-Video-Fingerprint': fingerprint,
         'X-Display-Correction': String(state.displayCorrection?.strength || 0),
@@ -874,7 +948,11 @@ async function runBackendAnalysis() {
       },
       body: state.file,
     });
+    const response = await backendSubmission;
+    backendSubmission = null;
+    if (token !== backendRunToken) return;
     const accepted = await response.json().catch(() => ({}));
+    if (token !== backendRunToken) return;
     if (!response.ok) {
       if (accepted.code === 'analysis_in_progress') {
         const activeResponse = await fetch(apiUrl('/api/status'), { cache: 'no-store' });
@@ -889,6 +967,7 @@ async function runBackendAnalysis() {
     }
     const workload = Math.max(0.01, Number(accepted.workload_factor) || 1);
     $('#timeHint').textContent = `每秒 ${accepted.fps} 帧原画质分析 · 预计工作量 ${workload.toFixed(2)} 倍`;
+    state.executionTarget = accepted.execution_target;
     const acceptedStatus = {
       state: 'queued', progress: 1, stage: accepted.resumed ? '正在继续上次分析' : '视频已接收，准备分析',
       ...accepted, video_fingerprint: accepted.video_fingerprint || fingerprint,
@@ -899,7 +978,7 @@ async function runBackendAnalysis() {
     console.error(error);
     setView('welcome');
     const message = error instanceof TypeError && /fetch/i.test(error.message)
-      ? '无法连接云端分析服务，请稍后重试'
+      ? '无法连接分析服务，请稍后重试'
       : error.message;
     toast(`分析未完成：${message}`);
   }
@@ -996,6 +1075,8 @@ function switchReportVideo(source, { preservePlayback = false } = {}) {
   video.load();
   video.addEventListener('loadedmetadata', () => {
     if (preservePlayback) video.currentTime = Math.min(time, video.duration || time);
+    showCourtViewpoint($('#reportViewpoint'), state.scene?.court_image_corners,
+      state.scene?.source_size?.width || video.videoWidth, state.scene?.source_size?.height || video.videoHeight, state.scene?.viewpoint);
     updateMeta();
     buildEvents();
     renderAll();
@@ -1009,7 +1090,7 @@ function setReplayPending(pending) {
   $('#replayPending').hidden = !pending;
   $('#replayDescription').textContent = pending
     ? '分析结果已经就绪，智能标记正在叠加'
-    : '轨迹、球员、球场和落地区域已经叠加';
+    : '网球位置、球员、球场和落地区域已经叠加';
   $$('.ai-label, .video-legend').forEach((element) => { element.hidden = pending; });
   if (pending) {
     video.pause();
@@ -1107,6 +1188,12 @@ function applyRealMetrics() {
   $('#bounceCount').textContent = scene.bounces.length;
   $('#validBounceText').textContent = `${valid.length} 次界内 · ${out} 次界外${review ? ` · ${review} 次待复核` : ''}`;
   $('#hitCount').textContent = scene.hits.length;
+  $('#currentSpeed').textContent = '当前飞行段球速：—';
+  const speedEstimates = scene.speed_analysis?.estimates || [];
+  const speedValues = speedEstimates.map(item => item.speed_kmh).sort((a, b) => a - b);
+  $('#speedSummary').textContent = speedValues.length
+    ? `估算球速：${Math.round(speedValues[Math.floor(speedValues.length / 2)])} km/h（有效飞行窗口中位数，${speedValues.length} 段）；基于相机与飞行模型，非击球初速，尚未用真实测速验证`
+    : '估算球速：暂无可靠结果（需足够连续轨迹与稳定相机标定；旧报告需重新分析）';
   $('#trackRate').textContent = `${Math.round(trackRate * 100)}%`;
   $('#trackDetail').textContent = `${trackedFrames.toLocaleString()} / ${scene.n_frames.toLocaleString()} 帧`;
   $('#courtError').innerHTML = '0.69<sup>像素</sup>';
@@ -1222,7 +1309,7 @@ function activeRallyAt(scene, now) {
   const contact = [...(scene.hits || []), ...(scene.bounces || []), ...(scene.net_hits || [])]
     .filter((e) => e.rally_id != null && e.frame <= frame)
     .sort((a, b) => b.frame - a.frame)[0];
-  return contact && now - contact.frame / scene.fps <= 2 ? contact.rally_id : null;
+  return contact ? contact.rally_id : null;
 }
 
 function courtCornersAt(scene, now) {
@@ -1258,38 +1345,13 @@ function courtProjector(corners, width, height) {
   };
 }
 
-function drawVideoBallAndTrail(ctx, width, height, now) {
+function drawVideoBall(ctx, width, height, now) {
   if ($('#analysisVideo').closest('.video-shell').classList.contains('browser-corrected')) return;
   const frames = state.scene?.frames || [];
   if (!frames.length || !state.scene?.fps) return;
   const frameIndex = Math.min(frames.length - 1, Math.max(0, sceneFrameAt(state.scene, now)));
   const current = frames[frameIndex];
   if (!Array.isArray(current?.bp)) return;
-  let start = Math.max(0, frameIndex - Math.max(8, Math.round(0.84 * state.scene.fps)));
-  const contactFrames = [
-    ...(state.scene.bounces || []).map((event) => Number(event.frame)),
-    ...(state.scene.hits || []).map((event) => Number(event.frame)),
-    ...(state.scene.net_hits || []).map((event) => Number(event.frame)),
-  ].filter((frame) => Number.isFinite(frame) && frame <= frameIndex && frame >= start);
-  if (contactFrames.length) start = Math.max(start, Math.max(...contactFrames));
-  const trackId = current.k;
-  const trail = [];
-  for (let index = frameIndex; index >= start; index -= 1) {
-    const frame = frames[index];
-    if (!Array.isArray(frame?.dp) || (trackId != null && frame.k !== trackId)) break;
-    trail.push([frame.dp[0] * width, frame.dp[1] * height]);
-  }
-  trail.reverse();
-  if (trail.length > 1) {
-    ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    for (let index = 1; index < trail.length; index += 1) {
-      const alpha = 0.08 + 0.56 * index / (trail.length - 1);
-      ctx.strokeStyle = `rgba(218, 67, 255, ${alpha})`;
-      ctx.lineWidth = 1.2 + 1.6 * index / (trail.length - 1);
-      ctx.beginPath(); ctx.moveTo(...trail[index - 1]); ctx.lineTo(...trail[index]); ctx.stroke();
-    }
-    ctx.restore();
-  }
   const x = current.bp[0] * width, y = current.bp[1] * height;
   ctx.save(); ctx.fillStyle = '#ff4cef'; ctx.shadowColor = '#d83fff'; ctx.shadowBlur = 12;
   ctx.beginPath(); ctx.arc(x, y, Math.max(3, width * 0.004), 0, Math.PI * 2); ctx.fill(); ctx.restore();
@@ -1327,26 +1389,39 @@ function drawEventOverlay() {
     ctx.save(); ctx.fillStyle = `rgba(255, 226, 42, ${alpha})`; ctx.shadowColor = 'rgba(255,226,42,.7)'; ctx.shadowBlur = 12;
     ctx.beginPath(); ctx.moveTo(...polygon[0]); polygon.slice(1).forEach((point) => ctx.lineTo(...point)); ctx.closePath(); ctx.fill(); ctx.restore();
   }
-  drawVideoBallAndTrail(ctx, width, height, now);
+  drawVideoBall(ctx, width, height, now);
 
-  // Match the original baked overlay exactly: 50px at the 640px tuning width,
-  // equal metres per pixel, six-pixel margin, fixed to the bottom-right corner.
+  // Use the baked renderer's visual scale; one shared scale preserves court metres.
   const mapWidth = width * (50 / 640);
-  const mapHeight = mapWidth * ((23.77 + 5.0) / (10.97 + 3.0));
+  const pad = mapWidth * (1.5 / 50);
+  const metresToPixels = (mapWidth - 2 * pad) / 13.97;
+  const mapHeight = 28.77 * metresToPixels + 2 * pad;
   const mapMargin = width * (6 / 640);
   const left = width - mapWidth - mapMargin, top = height - mapHeight - mapMargin;
   ctx.save();
   ctx.fillStyle = 'rgba(28, 28, 28, .82)'; ctx.strokeStyle = 'rgba(200,200,200,.9)';
   ctx.lineWidth = 1; ctx.fillRect(left, top, mapWidth, mapHeight); ctx.strokeRect(left, top, mapWidth, mapHeight);
-  const pad = Math.max(3, mapWidth * 0.03);
   const xMin = -1.5, xMax = 12.47, yMin = -2.5, yMax = 26.27;
-  const px = (x) => left + pad + ((x - xMin) / (xMax - xMin)) * (mapWidth - 2 * pad);
-  const py = (y) => top + pad + (1 - (y - yMin) / (yMax - yMin)) * (mapHeight - 2 * pad);
+  const px = (x) => left + pad + (x - xMin) * metresToPixels;
+  const py = (y) => top + pad + (yMax - y) * metresToPixels;
+  const markerRadius = mapWidth * (0.9 / 50);
+  const rimRadius = mapWidth * (1.5 / 50);
+  const crossRadius = mapWidth * (1.4 / 50);
+  const mapCross = (x, y) => {
+    x = Math.max(left + crossRadius + 1, Math.min(left + mapWidth - crossRadius - 1, x));
+    y = Math.max(top + crossRadius + 1, Math.min(top + mapHeight - crossRadius - 1, y));
+    ctx.save(); ctx.shadowBlur = 0;
+    ctx.beginPath();
+    ctx.moveTo(x - crossRadius, y - crossRadius); ctx.lineTo(x + crossRadius, y + crossRadius);
+    ctx.moveTo(x + crossRadius, y - crossRadius); ctx.lineTo(x - crossRadius, y + crossRadius);
+    ctx.strokeStyle = '#141414'; ctx.lineWidth = mapWidth * (1.5 / 50); ctx.stroke();
+    ctx.strokeStyle = '#ff665e'; ctx.lineWidth = mapWidth / 50; ctx.stroke(); ctx.restore();
+  };
   const x0 = px(0), x1 = px(10.97), y0 = py(23.77), y1 = py(0);
   ctx.strokeStyle = 'rgba(222,255,184,.9)'; ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
   ctx.beginPath(); ctx.moveTo(x0, py(11.885)); ctx.lineTo(x1, py(11.885));
-  ctx.moveTo(x0, py(5.485)); ctx.lineTo(x1, py(5.485));
-  ctx.moveTo(x0, py(18.285)); ctx.lineTo(x1, py(18.285));
+  ctx.moveTo(px(1.37), py(5.485)); ctx.lineTo(px(9.60), py(5.485));
+  ctx.moveTo(px(1.37), py(18.285)); ctx.lineTo(px(9.60), py(18.285));
   ctx.moveTo(px(1.37), y0); ctx.lineTo(px(1.37), y1);
   ctx.moveTo(px(9.60), y0); ctx.lineTo(px(9.60), y1);
   ctx.moveTo(px(5.485), py(5.485)); ctx.lineTo(px(5.485), py(18.285)); ctx.stroke();
@@ -1362,16 +1437,17 @@ function drawEventOverlay() {
       const worldY = lineCall === 'out' ? Math.max(yMin, Math.min(yMax, bounce.y)) : bounce.y;
       const x = px(worldX), y = py(worldY);
       if (lineCall === 'out') {
-        drawRedCross(ctx, x, y, 5);
+        mapCross(x, y);
       } else {
+        ctx.fillStyle = '#121212';
+        ctx.beginPath(); ctx.arc(x, y, rimRadius, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = state.scene.player_identities?.[bounce.player_id]?.color || '#d7ff78';
-        ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 12;
-        ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+        ctx.beginPath(); ctx.arc(x, y, markerRadius, 0, Math.PI * 2); ctx.fill();
       }
     });
   (state.scene.net_hits || [])
     .filter((event) => activeRally != null && event.rally_id === activeRally && eventDecisionTime(event) <= now)
-    .forEach((event) => drawRedCross(ctx, px(event.x), py(event.y), 5));
+    .forEach((event) => mapCross(px(event.x), py(event.y)));
   ctx.restore();
 }
 
@@ -1594,8 +1670,8 @@ $('#correctionPreviewCanvas').addEventListener('click', (event) => {
   if (!correctionPreview.marking || correctionPreview.points.length >= 4) return;
   const canvas = event.currentTarget, rect = canvas.getBoundingClientRect();
   correctionPreview.points.push([
-    (event.clientX - rect.left) * canvas.width / rect.width,
-    (event.clientY - rect.top) * canvas.height / rect.height,
+    (event.clientX - rect.left) * canvas.width / rect.width - correctionPreview.frame.width * 0.15,
+    (event.clientY - rect.top) * canvas.height / rect.height - correctionPreview.frame.height * 0.15,
   ]);
   const labels = ['近端左角', '近端右角', '远端右角', '远端左角'];
   if (correctionPreview.points.length === 4) {
@@ -1635,6 +1711,12 @@ $$('.event-filter button').forEach((button) => button.addEventListener('click', 
 }));
 window.addEventListener('resize', () => { if (!$('#resultsView').hidden) renderAll(); });
 $('#analysisVideo').addEventListener('timeupdate', (event) => {
+  const now = event.currentTarget.currentTime;
+  const speed = state.scene?.speed_analysis?.estimates?.find(item => now >= item.start_time_s && now <= item.end_time_s);
+  $('#currentSpeed').textContent = speed
+    ? `当前飞行段估算球速：${Math.round(speed.speed_kmh)} km/h（飞行段中点速度）`
+    : '当前飞行段球速：—（暂无可靠估计）';
+
   $('#playhead').style.left = `${Math.min(100, event.currentTarget.currentTime / Math.max(state.duration, 1) * 100)}%`;
   drawEventOverlay();
   if (browserCorrection.active) { drawCorrectedVideoFrame(); updateCorrectedControls(); }
@@ -1673,7 +1755,7 @@ $('#overlayToggle').addEventListener('change', (event) => {
   const assets = activeOutput();
   state.annotated = event.target.checked; video.src = state.annotated ? assets.annotated : assets.original; video.load();
   video.addEventListener('loadedmetadata', () => { video.currentTime = Math.min(time, video.duration || time); if (wasPlaying) video.play().catch(() => {}); }, { once: true });
-  toast(state.annotated ? '已显示球轨迹与落地标记' : '已切换为原始比赛画面');
+  toast(state.annotated ? '已显示网球位置与落地标记' : '已切换为原始比赛画面');
 });
 $('#newAnalysisBtn').addEventListener('click', () => resetForNextAnalysis({ announce: true }));
 $('#historyBtn').addEventListener('click', openHistory);

@@ -34,6 +34,11 @@ assert.equal(liveCalibrationPoint(120, 50, tall, 1920, 1080), null);
 // Resizing keeps the same normalized point without introducing any snapping.
 check(liveCalibrationPoint(60, 220, {left:20, top:40, width:400, height:225}, 1280,720), [0.1,0.8]);
 assert.equal(liveCalibrationPoint(0,0,{left:0,top:0,width:0,height:0},1280,720), null);
+// The drawable gutter is selectable, unlike CSS object-fit letterboxing.
+check(liveCalibrationPoint(250, 100, wide, 1280, 720, .15), [-.15, -.15]);
+check(liveCalibrationPoint(850, 437.5, wide, 1280, 720, .15), [1.15, 1.15]);
+check(liveCalibrationPoint(550, 268.75, wide, 1280, 720, .15), [.5, .5]);
+assert.equal(liveCalibrationPoint(100, 200, wide, 1280, 720, .15), null);
 """
     subprocess.run([node, "-e", script[start:end] + checks], check=True, capture_output=True, text=True)
 
@@ -115,7 +120,7 @@ def test_offline_minimap_persists_beyond_the_yellow_flash() -> None:
     assert "const mapWidth = width * (50 / 640)" in script
     assert "const left = width - mapWidth - mapMargin" in script
     assert "if (!latest) return" not in script
-    assert "drawVideoBallAndTrail(ctx, width, height, now)" in script
+    assert "drawVideoBall(ctx, width, height, now)" in script
     assert "courtProjector(courtCornersAt(state.scene, now)" in script
     assert "zoneBounds[recentDecision.zone]" in script
 

@@ -152,32 +152,17 @@ def dominant_player_color(crop: np.ndarray) -> np.ndarray | None:
     if height < 20 or width < 8:
         return None
     torso = crop[
-        max(0, round(height * 0.20)):max(1, round(height * 0.56)),
+        max(0, round(height * 0.16)):max(1, round(height * 0.42)),
         max(0, round(width * 0.28)):max(1, round(width * 0.72)),
     ]
     if torso.size == 0:
         return None
     torso_pixels = torso.reshape(-1, 3)
     pixels = torso_pixels[::max(1, len(torso_pixels) // 1200)]
-    hsv = cv2.cvtColor(pixels.reshape(-1, 1, 3), cv2.COLOR_BGR2HSV).reshape(-1, 3)
-    visible = (hsv[:, 2] >= 18) & (hsv[:, 2] <= 250)
-    edge = max(1, min(height, width) // 12)
-    border = np.concatenate((
-        crop[:edge].reshape(-1, 3), crop[-edge:].reshape(-1, 3),
-        crop[:, :edge].reshape(-1, 3), crop[:, -edge:].reshape(-1, 3),
-    ))[::max(1, (2 * edge * (height + width)) // 64)]
-    pixel_lab = cv2.cvtColor(
-        pixels.astype(np.uint8).reshape(-1, 1, 3), cv2.COLOR_BGR2LAB,
-    ).reshape(-1, 3).astype(np.float32)
-    border_lab = cv2.cvtColor(
-        border.astype(np.uint8).reshape(-1, 1, 3), cv2.COLOR_BGR2LAB,
-    ).reshape(-1, 3).astype(np.float32)
-    background_distance = np.min(
-        np.linalg.norm(pixel_lab[:, None, :] - border_lab[None, :, :], axis=2), axis=1,
-    )
-    foreground = visible & (background_distance >= 16.0)
-    base = foreground if int(foreground.sum()) >= max(12, round(visible.sum() * 0.10)) else visible
-    selected = pixels[base]
+    # Border pixels often contain the shirt itself (arms, bent torso, tight crops).
+    # Subtracting all border colours discarded white/black shirts and selected court blue.
+    # Vote within the central torso directly; include black and clipped white clothing.
+    selected = pixels
     if len(selected) < 8:
         return None
     buckets = (selected.astype(np.int32) // 32).clip(0, 7)
@@ -199,7 +184,10 @@ def stable_player_color(
     distances = np.linalg.norm(lab[:, None, :] - lab[None, :, :], axis=2)
     chosen = bgr[int(np.argmin(np.median(distances, axis=1)))].reshape(1, 1, 3)
     hsv = cv2.cvtColor(chosen, cv2.COLOR_BGR2HSV).reshape(3).astype(int)
-    if hsv[1] < 30:
+    if hsv[2] < 65:
+        # Raising the brightness of nearly black fabric must not amplify blue/red noise.
+        hsv[1], hsv[2] = 0, 105
+    elif hsv[1] < 30:
         hsv[2] = int(np.clip(hsv[2], 105, 235))
     else:
         hsv[1] = int(np.clip(hsv[1], 85, 245))
@@ -212,10 +200,13 @@ def stable_player_color(
 def identity_palette(
     observations: dict[int, dict[str, dict[str, Any]]],
     dense_decisions: list[dict[str, Any]],
+    enrol_end: int | None = None,
 ) -> dict[str, str]:
     """Aggregate torso colours under the same temporally stable A/B identity labels."""
     samples: dict[str, list[np.ndarray]] = defaultdict(list)
     for frame_index, by_side in observations.items():
+        if enrol_end is not None and frame_index > enrol_end:
+            continue
         if not (0 <= frame_index < len(dense_decisions)):
             continue
         mapping = dense_decisions[frame_index]["mapping"]
@@ -224,12 +215,28 @@ def identity_palette(
             colour = observation.get("color_bgr")
             if identity in {"A", "B"} and colour is not None:
                 samples[identity].append(colour)
-    return {
+    palette = {
         identity: stable_player_color(
             samples[identity], rgb_to_hex(PLAYER_COLORS_RGB[identity])
         )
         for identity in ("A", "B")
     }
+    return distinguish_player_colors(palette)
+
+
+def distinguish_player_colors(palette: dict[str, str]) -> dict[str, str]:
+    """Keep shirt-derived hues where possible, but separate similar display colours."""
+    result = dict(palette)
+    rgb = np.asarray([[int(result[k][i:i + 2], 16) for i in (1, 3, 5)]
+                      for k in ("A", "B")], dtype=np.uint8)
+    lab = cv2.cvtColor(rgb.reshape(2, 1, 3), cv2.COLOR_RGB2LAB).reshape(2, 3).astype(float)
+    if np.linalg.norm(lab[0] - lab[1]) >= 60:
+        return result
+    hsv = cv2.cvtColor(rgb.reshape(2, 1, 3), cv2.COLOR_RGB2HSV).reshape(2, 3)
+    # Similar kits need deliberate display accents, not an invented identity change.
+    hsv[0, 2], hsv[1, 2] = 125, 240
+    adjusted = cv2.cvtColor(hsv.reshape(2, 1, 3), cv2.COLOR_HSV2RGB).reshape(2, 3)
+    return {key: rgb_to_hex(tuple(map(int, adjusted[i]))) for i, key in enumerate(("A", "B"))}
 
 
 def preprocess(crops: list[np.ndarray]) -> torch.Tensor:
@@ -374,6 +381,17 @@ def classify_observations(
     proposed_count = switches = pair_frames = ambiguous = 0
     motion_rejections = 0
     margins: list[float] = []
+    # Shirt evidence complements ReID when a tiny far-side crop cannot be compared
+    # to a sharp near-side crop. Freeze enrollment colours under the opening identities.
+    shirt_profiles = {}
+    for side, identity in (("near", "A"), ("far", "B")):
+        samples = [item[side]["color_bgr"] for f, item in observations.items()
+                   if f <= enrol_end and side in item and item[side].get("color_bgr") is not None]
+        if len(samples) >= 6:
+            colour = np.median(np.stack(samples), axis=0).astype(np.uint8)
+            shirt_profiles[identity] = cv2.cvtColor(colour.reshape(1, 1, 3), cv2.COLOR_BGR2LAB)[0, 0].astype(float)
+    distinct_shirts = (len(shirt_profiles) == 2 and
+                       np.linalg.norm(shirt_profiles["A"] - shirt_profiles["B"]) >= 65)
     for frame_index in sorted(observations):
         by_side = observations[frame_index]
         scores = {
@@ -397,6 +415,37 @@ def classify_observations(
                 pair_frames += 1
                 margins.append(pair_advantage)
                 ambiguous += int(not strong)
+
+        # A clearly observed player is enough to identify the pair by exclusion.
+        # Only large crops with well-separated enrollment colours may override ReID.
+        colour_votes = []
+        if distinct_shirts:
+            for side, observation in by_side.items():
+                box, colour = observation.get("box"), observation.get("color_bgr")
+                if (box is None or colour is None or box[3] - box[1] < 60
+                        or (box[2] - box[0]) / max(box[3] - box[1], 1) < 0.18):
+                    continue
+                lab = cv2.cvtColor(np.asarray(colour, np.uint8).reshape(1, 1, 3), cv2.COLOR_BGR2LAB)[0, 0].astype(float)
+                distances = {key: float(np.linalg.norm(lab - value)) for key, value in shirt_profiles.items()}
+                winner = min(distances, key=distances.get)
+                other = "B" if winner == "A" else "A"
+                advantage = distances[other] - distances[winner]
+                if distances[winner] < 80 and advantage > 45:
+                    colour_votes.append(({side: winner, "far" if side == "near" else "near": other}, advantage / 255))
+        if colour_votes and all(vote[0] == colour_votes[0][0] for vote in colour_votes):
+            raw, pair_advantage = colour_votes[0]
+            strong = True
+        elif distinct_shirts:
+            # Do not undo a well-separated shirt identity on a tiny/occluded crop.
+            strong = False
+        elif len(scores) == 1:
+            side = next(iter(scores))
+            winner = max(scores[side], key=scores[side].get)
+            other = "B" if winner == "A" else "A"
+            advantage = scores[side][winner] - scores[side][other]
+            if scores[side][winner] >= 0.75 and advantage >= 0.20:
+                raw = {side: winner, "far" if side == "near" else "near": other}
+                pair_advantage, strong = advantage, True
 
         if strong and raw != current:
             if raw == proposed:
@@ -427,7 +476,8 @@ def classify_observations(
                 if proposed_since is not None else 0.0
             )
             motion_ready = not motion_available or proposal_seconds + 1e-9 >= required_seconds
-            if proposed_count >= max(1, confirmations) and motion_ready:
+            appearance_ready = not distinct_shirts or proposal_seconds >= 0.75
+            if proposed_count >= max(1, confirmations) and motion_ready and appearance_ready:
                 current = raw.copy()
                 current_confidence = pair_advantage
                 proposed, proposed_count, proposed_since = None, 0, None
@@ -516,7 +566,7 @@ def identify_players(
         "sample_frames": len(observations), "fps": round(fps, 4),
     })
     dense = make_dense_decisions(sparse, len(frames_meta))
-    return IdentityResult(dense, metrics, identity_palette(observations, dense))
+    return IdentityResult(dense, metrics, identity_palette(observations, dense, int(fps * enrol_seconds)))
 
 
 def attach_identity_to_frames(
@@ -611,6 +661,7 @@ def attribute_landings_to_hitters(
     events: list[dict[str, Any]],
     bounces: list[dict[str, Any]],
     frames_meta: list[dict[str, Any]],
+    *, fps: float = 30.0,
 ) -> None:
     """Attribute contacts with rally-stable identity and tennis-side corroboration.
 
@@ -638,6 +689,17 @@ def attribute_landings_to_hitters(
 
     def mapping_at(rally_id: int, frame_index: int) -> tuple[dict[str, str], float, float]:
         """Use rally consensus when available, otherwise the local dense ReID state."""
+        # Edited clips can change ends inside an imperfect rally boundary. A sustained
+        # identity segment must not be overwritten by votes from the other end of it.
+        if 0 <= frame_index < len(frames_meta):
+            local = frames_meta[frame_index].get("player_identity_by_side")
+            lo = hi = frame_index
+            while lo > 0 and frames_meta[lo - 1].get("player_identity_by_side") == local:
+                lo -= 1
+            while hi + 1 < len(frames_meta) and frames_meta[hi + 1].get("player_identity_by_side") == local:
+                hi += 1
+            if local and set(local.values()) == {"A", "B"} and hi - lo + 1 >= fps:
+                return _stable_rally_mapping(frames_meta, lo, hi)
         if rally_id in rally_mappings:
             return rally_mappings[rally_id]
         return _stable_rally_mapping(frames_meta, frame_index, frame_index)

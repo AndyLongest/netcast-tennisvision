@@ -14,10 +14,14 @@ project license decision in `docs/PUBLICATION_CHECKLIST.md`.
 
 - Source: <https://github.com/OrcustD/RacketVision>
 - Model repository: <https://huggingface.co/linfeng302/RacketVision-Models>
-- Use: MS-TrackNetV3 ball candidate network and upstream `balltrack_best.pth` tensors.
+- Use: MS-TrackNetV3 ball candidate network, RTMDet-M racket detection, RTMPose-M
+  five-point racket pose estimation, and their upstream checkpoint tensors.
 - License stated by upstream: MIT.
 - Local production file is a state-dict-only extraction; tensor shapes/counts and its
   SHA-256 are frozen in `assets/manifest.json`.
+- Optional RacketPose configs are derived from upstream commit
+  `c44af2a08524d3cb54d818f19686f4cdea4d2793`; its two full MMEngine checkpoints are
+  optional manifest assets and are verified before the trusted compatibility loader runs.
 
 ## Ultralytics
 

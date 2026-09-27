@@ -266,3 +266,69 @@ def test_new_live_upload_can_replace_an_active_session(tmp_path, monkeypatch):
     assert not old_thread.is_alive()
     assert snapshot["session_id"] != old_session
     assert snapshot["filename"] == "next.mp4"
+
+
+@pytest.mark.parametrize("phase", ["create", "endpoint", "service", "upload", "mirror"])
+def test_cancel_releases_before_next_analysis(tmp_path, monkeypatch, phase):
+    lifecycle = manager(tmp_path, monkeypatch)
+    entered, proceed, releasing = threading.Event(), threading.Event(), threading.Event()
+    finish_release = threading.Event()
+    released = []
+
+    def checkpoint(name, result=None):
+        if phase == name:
+            entered.set()
+            assert proceed.wait(5)
+            if name != "create":
+                lifecycle._check_cancelled()
+        return result
+
+    monkeypatch.setattr(lifecycle, "_create_instance", lambda: checkpoint("create", "gpu-cancel"))
+    monkeypatch.setattr(lifecycle, "_wait_for_endpoint", lambda _: checkpoint("endpoint", "http://worker"))
+    monkeypatch.setattr(lifecycle, "_wait_for_service", lambda _: checkpoint("service"))
+    monkeypatch.setattr(lifecycle, "_upload_camera_profiles", lambda _: None)
+    monkeypatch.setattr(lifecycle, "_upload_video", lambda *_: checkpoint("upload"))
+    monkeypatch.setattr(lifecycle, "_mirror_until_complete", lambda _: checkpoint("mirror"))
+
+    def release(instance):
+        releasing.set()
+        assert finish_release.wait(5)
+        released.append(instance)
+        return True
+
+    monkeypatch.setattr(lifecycle, "_release_instance", release)
+    lifecycle.start(tmp_path / "clip.mp4", {})
+    assert entered.wait(5)
+    lifecycle.stop()
+    proceed.set()
+    assert releasing.wait(5)
+    assert lifecycle.stopping
+    with pytest.raises(CloudLifecycleError):
+        lifecycle.start(tmp_path / "next.mp4", {})
+    finish_release.set()
+    lifecycle._thread.join(5)
+    assert not lifecycle.active
+    assert released == ["gpu-cancel"]
+    assert lifecycle._read_json(lifecycle.status_path)["state"] == "cancelled"
+    assert not lifecycle.runtime_path.exists()
+    monkeypatch.setattr(lifecycle, "_run", lambda *_: None)
+    lifecycle.start(tmp_path / "next.mp4", {})
+    lifecycle._thread.join(5)
+    assert not lifecycle._cancel_event.is_set()
+
+
+def test_cancel_cleanup_failure_can_retry_without_losing_instance(tmp_path, monkeypatch):
+    lifecycle = manager(tmp_path, monkeypatch)
+    lifecycle._write_json(lifecycle.runtime_path, {"instance_id": "gpu-retry"})
+    monkeypatch.setattr(lifecycle, "_release_instance", lambda _: False)
+    lifecycle.stop()
+    lifecycle._thread.join(5)
+    assert lifecycle._read_json(lifecycle.status_path)["state"] == "stop_failed"
+    assert lifecycle.runtime_path.exists()
+    with pytest.raises(CloudLifecycleError):
+        lifecycle.start(tmp_path / "new.mp4", {})
+    monkeypatch.setattr(lifecycle, "_release_instance", lambda _: True)
+    lifecycle.stop()
+    lifecycle._thread.join(5)
+    assert lifecycle._read_json(lifecycle.status_path)["state"] == "cancelled"
+    assert not lifecycle.runtime_path.exists()

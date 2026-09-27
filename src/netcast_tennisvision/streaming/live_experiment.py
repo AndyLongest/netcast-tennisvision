@@ -29,12 +29,20 @@ import cv2
 import numpy as np
 import torch
 
+from netcast_tennisvision.events.landing_detector import (
+    estimate_landing_subframe,
+    landing_candidate_meta,
+)
 from netcast_tennisvision.events.landing_event_detector import detect_landing_impulses
 from netcast_tennisvision.events.line_call import classify_line_call
 from netcast_tennisvision.paths import REPOSITORY_ROOT
+from netcast_tennisvision.streaming.live_inference import shared_live_inference
 from netcast_tennisvision.streaming.result_relay import ResultRelayPublisher
 from netcast_tennisvision.tracking.geometry import inside_player_body
-from netcast_tennisvision.tracking.world_tracker import track_ball_persistent
+from netcast_tennisvision.tracking.world_tracker import (
+    BallTrackerContinuation,
+    track_ball_persistent,
+)
 from netcast_tennisvision.vision.court_motion import PeriodicCourtMotion
 from netcast_tennisvision.vision.player_identity import (
     PLAYER_COLORS_RGB,
@@ -108,6 +116,28 @@ def compare_landing_events(
         "precision": matched / len(online) if online else None,
         "matches": matches,
     }
+
+
+def _incremental_event_context(
+    *,
+    total_frames: int,
+    window_start: int,
+    last_scanned: int,
+    latest_decidable: int,
+    radius: int,
+    min_gap_frames: int,
+) -> tuple[int, int]:
+    """Return a half-open context containing every newly decidable event centre.
+
+    The padding preserves both the local impulse fit and neighbouring candidates used by
+    non-maximum suppression.  It bounds expensive scoring without changing its evidence.
+    """
+    first_new = max(window_start, last_scanned + 1)
+    padding = radius + min_gap_frames
+    return (
+        max(window_start, first_new - padding),
+        min(total_frames, latest_decidable + padding + 1),
+    )
 
 
 def _ffmpeg() -> str:
@@ -237,6 +267,7 @@ class LiveExperimentSession:
         self._producer: subprocess.Popen[bytes] | None = None
         self._remote_webrtc_url = ""
         self._latest_jpeg: bytes | None = None
+        self._speed_worker = None
         self._events: list[dict[str, Any]] = []
         self._status: dict[str, Any] = {
             "session_id": self.id,
@@ -334,6 +365,7 @@ class LiveExperimentSession:
     def _run(self) -> None:
         capture: cv2.VideoCapture | None = None
         stream_decoder: subprocess.Popen[bytes] | None = None
+        shared_acquired = False
         try:
             external_stream = bool(self.external_stream_name)
             if not BALL_WEIGHT.is_file() or not PERSON_WEIGHT.is_file():
@@ -359,43 +391,40 @@ class LiveExperimentSession:
                 background_channels = None
 
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            ball_model = load_model(BALL_WEIGHT, device)
-            from ultralytics import YOLO
+            def prepare_models() -> tuple[Any, Any]:
+                ball = load_model(BALL_WEIGHT, device)
+                from ultralytics import YOLO
 
-            person_model = YOLO(str(PERSON_WEIGHT))
-            if external_stream:
-                # Compile CUDA kernels and initialize both frozen models before telling
-                # the camera simulator to publish. Otherwise the first inference call
-                # can stall for several seconds and discard the opening rally even
-                # though steady-state throughput is faster than real time.
-                warm_batch = _bounded_int_env(
-                    "TENNISVISION_LIVE_BATCH_SIZE", DEFAULT_LIVE_BATCH_SIZE, 1, 64
-                )
-                warm_inputs = torch.zeros(
-                    (
-                        warm_batch,
-                        3 * (SEQUENCE_LENGTH + 1),
-                        MODEL_HEIGHT,
-                        MODEL_WIDTH,
-                    ),
-                    dtype=torch.float32,
-                    device=device,
-                )
-                with torch.inference_mode():
-                    if device.type == "cuda":
-                        with torch.autocast("cuda", dtype=torch.float16):
-                            ball_model(warm_inputs)
-                    else:
-                        ball_model(warm_inputs)
-                person_model.predict(
-                    np.zeros((720, 1280, 3), dtype=np.uint8),
-                    device=str(device),
-                    verbose=False,
-                    imgsz=640,
-                    conf=0.25,
-                    classes=[0],
-                )
-                del warm_inputs
+                person = YOLO(str(PERSON_WEIGHT))
+                if external_stream:
+                    # Finish cold-start work before the camera begins publishing.
+                    warm_batch = _bounded_int_env(
+                        "TENNISVISION_LIVE_BATCH_SIZE", DEFAULT_LIVE_BATCH_SIZE, 1, 64
+                    )
+                    warm_inputs = torch.zeros(
+                        (warm_batch, 3 * (SEQUENCE_LENGTH + 1), MODEL_HEIGHT, MODEL_WIDTH),
+                        dtype=torch.float32, device=device,
+                    )
+                    with torch.inference_mode():
+                        if device.type == "cuda":
+                            with torch.autocast("cuda", dtype=torch.float16):
+                                ball(warm_inputs)
+                        else:
+                            ball(warm_inputs)
+                    person.predict(
+                        np.zeros((720, 1280, 3), dtype=np.uint8),
+                        device=str(device), verbose=False, imgsz=640,
+                        conf=0.25, classes=[0],
+                    )
+                return ball, person
+
+            shared_mode = os.environ.get("TENNISVISION_LIVE_SHARED_INFERENCE", "0") == "1"
+            if shared_mode:
+                shared_live_inference.acquire(prepare_models, device)
+                shared_acquired = True
+                ball_model = person_model = None
+            else:
+                ball_model, person_model = prepare_models()
             host = _media_host()
             webrtc_origin = _webrtc_origin(host)
             stream_name = self.external_stream_name or f"netcast-{self.id[:12]}"
@@ -407,6 +436,7 @@ class LiveExperimentSession:
             self._update(state="awaiting_stream" if external_stream else "connecting",
                          stage="模型已就绪，等待摄像头推流" if external_stream else "正在建立 RTMP / ZLMediaKit 链路", fps=fps,
                          total_frames=total_frames, media_host=host, device=str(device),
+                         shared_inference=shared_mode,
                          stream_id=stream_name,
                          fmp4_playback_url=(
                              f"{webrtc_origin}/live/{stream_name}.live.mp4"
@@ -556,7 +586,17 @@ class LiveExperimentSession:
             spatial = min(width / 1280.0, height / 720.0)
 
             self._update(state="running", stage="真实链路在线分析中", started_at=producer_started)
+            from .speed_worker import LiveSpeedWorker
+            speed_enabled = os.environ.get("TENNISVISION_LIVE_SPEED", "1") != "0"
+            self._speed_worker = LiveSpeedWorker(self._update, enabled=speed_enabled)
+            self._update(speed={"enabled": speed_enabled, "count": 0, "recent": []})
             frames_meta: list[dict[str, Any]] = []
+            incremental_temporal = (
+                os.environ.get("TENNISVISION_LIVE_INCREMENTAL_TEMPORAL", "1") != "0"
+            )
+            tracker_continuation = (
+                BallTrackerContinuation() if incremental_temporal else None
+            )
             frame_window: deque[np.ndarray] = deque(maxlen=SEQUENCE_LENGTH)
             pending_inputs: list[np.ndarray] = []
             pending_frames: list[np.ndarray] = []
@@ -570,6 +610,11 @@ class LiveExperimentSession:
             side_color_samples: dict[str, deque[np.ndarray]] = {
                 "near": deque(maxlen=45), "far": deque(maxlen=45),
             }
+            profile_enabled = os.environ.get("TENNISVISION_LIVE_PROFILE", "0") == "1"
+            profile_totals_ms = {name: 0.0 for name in (
+                "ball_and_decode", "people", "metadata", "tracking", "events",
+            )}
+            profile_batches = 0
 
             def live_player_colors() -> dict[str, str]:
                 return {
@@ -585,22 +630,28 @@ class LiveExperimentSession:
             last_person_boxes = np.empty((0, 4), dtype=np.float32)
             emitted_frames: set[int] = set()
             last_event_frame = -10_000
+            last_event_scan_frame = -1
             rally_id = 0
             last_preview = 0.0
             peak_backlog = 0.0
 
             def process_batch() -> None:
-                nonlocal last_event_frame, rally_id, last_person_boxes
+                nonlocal last_event_frame, last_event_scan_frame, rally_id, last_person_boxes
                 nonlocal corners, image_to_world, world_to_image, net_point
+                nonlocal profile_batches
                 if not pending_inputs:
                     return
+                profile_start = time.perf_counter() if profile_enabled else 0.0
                 inputs = torch.from_numpy(np.stack(pending_inputs)).to(device, non_blocking=True)
-                with torch.inference_mode():
-                    if device.type == "cuda":
-                        with torch.autocast("cuda", dtype=torch.float16):
+                if shared_mode:
+                    heatmaps = shared_live_inference.infer_ball(inputs)
+                else:
+                    with torch.inference_mode():
+                        if device.type == "cuda":
+                            with torch.autocast("cuda", dtype=torch.float16):
+                                heatmaps = ball_model(inputs)
+                        else:
                             heatmaps = ball_model(inputs)
-                    else:
-                        heatmaps = ball_model(inputs)
                 decoded = [
                     _decode_candidates(
                         heatmap, DEFAULT_THRESHOLD, width / MODEL_WIDTH, height / MODEL_HEIGHT,
@@ -608,6 +659,7 @@ class LiveExperimentSession:
                     )
                     for heatmap in heatmaps.float().cpu().numpy()
                 ]
+                profile_ball_end = time.perf_counter() if profile_enabled else 0.0
                 first_index = pending_source_indices[0]
                 sampled_offsets = [
                     offset
@@ -616,10 +668,12 @@ class LiveExperimentSession:
                 ]
                 if not sampled_offsets and last_person_boxes.size == 0:
                     sampled_offsets = [0]
-                sampled_results = person_model.predict(
-                    [pending_frames[offset] for offset in sampled_offsets],
-                    device=str(device), verbose=False, imgsz=640, conf=0.25, classes=[0],
-                ) if sampled_offsets else []
+                sampled_results = (
+                    (shared_live_inference.predict_people if shared_mode else person_model.predict)(
+                        [pending_frames[offset] for offset in sampled_offsets],
+                        device=str(device), verbose=False, imgsz=640, conf=0.25, classes=[0],
+                    ) if sampled_offsets else []
+                )
                 boxes_by_offset = {
                     offset: _person_boxes(result)
                     for offset, result in zip(sampled_offsets, sampled_results, strict=True)
@@ -634,6 +688,7 @@ class LiveExperimentSession:
                         colour = dominant_player_color(crop) if crop is not None else None
                         if colour is not None:
                             side_color_samples[side].append(colour)
+                profile_people_end = time.perf_counter() if profile_enabled else 0.0
                 active_boxes = last_person_boxes
                 for offset, candidates in enumerate(decoded):
                     if offset in boxes_by_offset:
@@ -679,41 +734,86 @@ class LiveExperimentSession:
                 pending_inputs.clear()
                 pending_frames.clear()
                 pending_source_indices.clear()
+                profile_metadata_end = time.perf_counter() if profile_enabled else 0.0
 
-                # Re-evaluate only a bounded eight-second fixed-lag window.  Re-running
-                # the whole match after every four frames is quadratic and is not how a
-                # streaming service would retain state.
+                # Retain causal association state across batches.  The tracker advances
+                # only through newly appended native frames, while its snapshot still
+                # smooths the open trajectory with all evidence available so far.
                 window_size = max(120, round(8.0 * fps))
                 window_start = max(0, len(frames_meta) - window_size)
-                tracking_window = [dict(item) for item in frames_meta[window_start:]]
-                track_ball_persistent(
-                    tracking_window, fps=fps, spatial=spatial, speed_scale=spatial,
-                    frame_size=(width, height), play_mode="singles",
+                if incremental_temporal:
+                    track_ball_persistent(
+                        frames_meta, fps=fps, spatial=spatial, speed_scale=spatial,
+                        frame_size=(width, height), play_mode="singles",
+                        continuation=tracker_continuation, output_start=window_start,
+                    )
+                    tracking_window = frames_meta[window_start:]
+                else:
+                    tracking_window = [dict(item) for item in frames_meta[window_start:]]
+                    track_ball_persistent(
+                        tracking_window, fps=fps, spatial=spatial, speed_scale=spatial,
+                        frame_size=(width, height), play_mode="singles",
+                    )
+                profile_tracking_end = time.perf_counter() if profile_enabled else 0.0
+                self._speed_worker.submit(tracking_window, window_start, fps,
+                                          (width, height), producer_started)
+                event_radius = 8
+                min_event_gap = max(10, round(0.38 * fps))
+                fixed_lag = max(
+                    10, round(0.35 * fps), min_event_gap if incremental_temporal else 0,
                 )
-                fixed_lag = max(10, round(0.35 * fps))
                 latest_decidable = len(frames_meta) - 1 - fixed_lag
                 if latest_decidable < 0:
                     return
+                # Re-score only the frames that have newly become decidable.  The context
+                # includes both the impulse fit radius and the non-maximum-suppression
+                # neighbourhood, so the retained candidates see the same evidence as a
+                # full-window scan without revisiting finalized history.
+                if incremental_temporal:
+                    event_context_start, event_context_end = _incremental_event_context(
+                        total_frames=len(frames_meta), window_start=window_start,
+                        last_scanned=last_event_scan_frame,
+                        latest_decidable=latest_decidable, radius=event_radius,
+                        min_gap_frames=min_event_gap,
+                    )
+                    event_window = frames_meta[event_context_start:event_context_end]
+                else:
+                    event_context_start = window_start
+                    event_window = tracking_window
                 impulses = detect_landing_impulses(
-                    tracking_window, radius=8, min_score=0.52,
-                    min_gap_frames=max(10, round(0.38 * fps)),
+                    event_window, radius=event_radius, min_score=0.52,
+                    min_gap_frames=min_event_gap,
+                    candidate_filter=lambda proposal: landing_candidate_meta(
+                        proposal.frame, event_window, radius=event_radius) is not None,
                 )
                 for impulse in impulses:
                     local_frame = int(impulse["frame"])
-                    timeline_frame = window_start + local_frame
-                    if timeline_frame > latest_decidable:
+                    timeline_frame = event_context_start + local_frame
+                    if timeline_frame > latest_decidable or (
+                        incremental_temporal and timeline_frame <= last_event_scan_frame
+                    ):
                         continue
-                    meta = tracking_window[local_frame]
+                    meta = event_window[local_frame]
                     event_frame = int(meta.get("source_frame", timeline_frame))
                     if event_frame in emitted_frames:
                         continue
-                    point = meta.get("ball_px")
+                    context = landing_candidate_meta(
+                        local_frame, event_window, radius=event_radius,
+                    )
+                    if context is None:
+                        continue
+                    fit = estimate_landing_subframe(
+                        local_frame, event_window, radius=event_radius,
+                    )
+                    if event_context_start + fit["decision_frame"] >= len(frames_meta):
+                        continue
+                    point = fit.get("px") or context.get("ball_px")
                     if point is None or impulse.get("impulse_y_px_frame", 0.0) >= -0.15 * spatial:
                         continue
                     if inside_player_body(meta, np.asarray(point, dtype=float), spatial):
                         continue
                     world = cv2.perspectiveTransform(
-                        np.asarray([[point]], dtype=np.float32), image_to_world,
+                        np.asarray([[point]], dtype=np.float32), meta["M_inv"],
                     )[0, 0]
                     x, y = map(float, world)
                     # Keep a bounded apron so a genuine out ball remains observable.
@@ -733,10 +833,11 @@ class LiveExperimentSession:
                     player_id = "A" if hitter_side == "near" else "B"
                     player_colors = live_player_colors()
                     now = time.time()
-                    event_time = event_frame / fps
+                    touchdown_frame = event_frame + float(fit["frame_f"]) - local_frame
+                    event_time = touchdown_frame / fps
                     self._emit({
                         "id": len(self._events), "frame": event_frame,
-                        "touchdown_frame_f": float(event_frame),
+                        "touchdown_frame_f": touchdown_frame,
                         "decision_frame": int(frames_meta[-1].get("source_frame", len(frames_meta) - 1)),
                         "t": event_time, "x": x, "y": y,
                         "zone": "Out" if line.call == "out" else "在线候选",
@@ -746,13 +847,31 @@ class LiveExperimentSession:
                         "emitted_at": now,
                         "end_to_end_delay_ms": max(0.0, (now - producer_started - event_time) * 1000.0),
                     })
+                if incremental_temporal:
+                    last_event_scan_frame = latest_decidable
                 inferred_frames = int(self.snapshot().get("detector_frames", 0)) + len(decoded)
                 self._update(
                     detector_frames=inferred_frames,
                     tracker_frames=len(frames_meta),
                     batch_first_frame=first_index,
+                    incremental_temporal=incremental_temporal,
                     player_colors=live_player_colors(),
                 )
+                if profile_enabled:
+                    boundaries = (
+                        profile_start, profile_ball_end, profile_people_end,
+                        profile_metadata_end, profile_tracking_end,
+                        time.perf_counter(),
+                    )
+                    for name, before, after in zip(
+                        profile_totals_ms, boundaries[:-1], boundaries[1:], strict=True,
+                    ):
+                        profile_totals_ms[name] += (after - before) * 1000.0
+                    profile_batches += 1
+                    self._update(
+                        profile_batches=profile_batches,
+                        profile_total_ms=dict(profile_totals_ms),
+                    )
 
             # OpenCV already returns an independent ndarray for every decoded frame.
             # Queue it directly: the previous implementation JPEG-encoded every frame
@@ -880,7 +999,15 @@ class LiveExperimentSession:
                 pending_inputs.append(np.concatenate([background_channels, *sequence], axis=0))
                 pending_frames.append(current_frame)
                 pending_source_indices.append(source_index)
-                if len(pending_inputs) >= live_batch_size:
+                scheduled_batch_size = live_batch_size
+                if shared_mode and shared_live_inference.active_count > 1:
+                    scheduled_batch_size = min(
+                        live_batch_size,
+                        _bounded_int_env(
+                            "TENNISVISION_LIVE_SHARED_STREAM_BATCH", 16, 1, 64
+                        ),
+                    )
+                if len(pending_inputs) >= scheduled_batch_size:
                     process_batch()
 
                 update_now = time.time()
@@ -903,6 +1030,8 @@ class LiveExperimentSession:
 
             process_batch()
             reader_done.wait(timeout=2)
+            if self._speed_worker is not None:
+                self._speed_worker.close(drain=not self._stop.is_set())
             if self._stop.is_set():
                 self._update(state="stopped", stage="实验已停止")
             else:
@@ -940,6 +1069,8 @@ class LiveExperimentSession:
             else:
                 self._fail(error)
         finally:
+            if self._speed_worker is not None:
+                self._speed_worker.close()
             if capture is not None:
                 capture.release()
             if stream_decoder is not None and stream_decoder.poll() is None:
@@ -954,7 +1085,9 @@ class LiveExperimentSession:
                     self._producer.wait(timeout=3)
                 except subprocess.TimeoutExpired:
                     self._producer.kill()
-            if torch.cuda.is_available():
+            if shared_acquired:
+                shared_live_inference.release()
+            elif torch.cuda.is_available():
                 torch.cuda.empty_cache()
             if self._result_publisher is not None:
                 self._result_publisher.close()
@@ -964,6 +1097,7 @@ class LiveExperimentManager:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._session: LiveExperimentSession | None = None
+        self._external_sessions: dict[str, LiveExperimentSession] = {}
 
     def start_demo(
         self, *, court_corners: list[list[float]] | None = None
@@ -1003,6 +1137,27 @@ class LiveExperimentManager:
         ):
             raise RuntimeError("实时流名称无效")
         with self._lock:
+            if os.environ.get("TENNISVISION_LIVE_SHARED_INFERENCE", "0") == "1":
+                for existing in self._external_sessions.values():
+                    if (
+                        existing.external_stream_name == stream_name
+                        and existing.snapshot().get("state") in {
+                            "preparing", "awaiting_stream", "connecting", "running",
+                            "reconnecting",
+                        }
+                    ):
+                        return existing
+                session = LiveExperimentSession(
+                    None,
+                    external_stream_name=stream_name,
+                    fps_hint=fps_hint,
+                    source_name=source_name,
+                    result_session_id=result_session_id,
+                    court_corners=court_corners,
+                )
+                self._external_sessions[session.id] = session
+                session.start()
+                return session
             if self._session is not None and self._session.snapshot().get("state") in {
                 "preparing", "awaiting_stream", "connecting", "running", "reconnecting",
             }:
@@ -1022,7 +1177,7 @@ class LiveExperimentManager:
         with self._lock:
             if self._session is not None and self._session.id == session_id:
                 return self._session
-            return None
+            return self._external_sessions.get(session_id)
 
     def stop(self, session_id: str) -> bool:
         session = self.get(session_id)

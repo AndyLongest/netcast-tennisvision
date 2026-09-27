@@ -34,6 +34,8 @@ the repository root.
 
 | Script | Isolated variable |
 |---|---|
+| `experiment_far_court_roi.py` | Isolated native-rate full-frame versus far-court crop replay; `--low-view` adds gap-only bounce inference; production remains unchanged |
+| `render_low_view_review.py` | Mux original audio, verify every output frame and create synchronized low-view A/B review |
 | `benchmark_background_sampling.py` | Parallel deterministic background construction |
 | `benchmark_detector_parallelism.py` | Concurrent ball/person model execution |
 | `benchmark_person_prefetch.py` | Person-result preparation overlap |
@@ -41,7 +43,14 @@ the repository root.
 | `benchmark_production_batching.py` | Production ball-batch equivalence |
 | `benchmark_racketvision_batch.py` | Detector-only batch sizes |
 | `benchmark_live_cloud.py` | True RTMP/ZLMediaKit live chain on one auto-released PPIO GPU |
+| `benchmark_pose_pseudolive.py` | Local source-paced pose on/off compute latency, queue drops and pose cost; excludes transport |
+| `benchmark_pose_cloud.py` | Temporary L40S RTMP pose off/on/on/off experiment; uploads a checksummed payload and releases the instance |
+| `benchmark_pose_live_remote.py` | Isolated in-memory pose hooks for the maintained live worker; cloud benchmark payload only |
 
 Benchmark scripts may measure rejected variants. A script's presence does not mean its
 variant is enabled. Production decisions are recorded in
 `docs/CURRENT_ARCHITECTURE.md`; detailed evidence belongs in `docs/experiments/`.
+# Optional pose benchmark
+
+`benchmark_serve_pose.py` compares off/shadow overhead using a trusted local analysis
+cache. Configuration and interpretation: [serve pose](../docs/SERVE_POSE.md).

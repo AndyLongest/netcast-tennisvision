@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#171020" />
+  <meta name="description" content="Netcast TennisVision 人体骨架、球拍姿态、网球轨迹与落点地图联合回放。" />
+  <title>姿态与球拍样例 · Netcast TennisVision</title>
+  <link rel="stylesheet" href="pose-review.css?v=20260927a" />
+</head>
+<body>
+  <header class="pose-topbar">
+    <a class="pose-brand" href="index.html" aria-label="返回智能分析首页">
+      <img src="assets/netcast-mark.png" alt="" />
+      <span><strong>Netcast TennisVision</strong><small>COURT INTELLIGENCE</small></span>
+    </a>
+    <nav aria-label="页面导航">
+      <a href="index.html">智能分析</a>
+      <a href="live-lab.html">实时落点实验</a>
+      <a class="active" href="pose-review.html" aria-current="page">姿态与球拍样例</a>
+    </nav>
+  </header>
+
+  <main class="pose-page">
+    <section class="pose-heading">
+      <div>
+        <span class="pose-eyebrow"><i></i> GPU OFFLINE ANALYSIS</span>
+        <h1>人体、球拍与网球，<em>同一条时间轴。</em></h1>
+        <p>完整 57.9 秒样例。人体骨架、球拍五点、网球位置、球场与落点小地图已经写入视频帧，因此浏览器全屏、画中画或下载后播放都不会丢失分析标记。</p>
+      </div>
+      <div class="pose-facts" aria-label="样例信息">
+        <span><small>视频帧</small><strong>1,737</strong></span>
+        <span><small>原生帧率</small><strong>29.9 FPS</strong></span>
+        <span><small>球拍采样</small><strong>每 5 帧</strong></span>
+      </div>
+    </section>
+
+    <section class="pose-layout">
+      <article class="pose-player-card">
+        <div class="pose-player-head">
+          <div><span>完整分析回放</span><h2>骨架与球拍识别样例</h2></div>
+          <button id="poseFullscreen" type="button">全屏查看 <b>⛶</b></button>
+        </div>
+        <div class="pose-video-shell" id="poseVideoShell">
+          <video id="poseReviewVideo" controls playsinline preload="metadata">
+            <source src="../outputs/racket_pose_review/full_ball_human_racket_review_h264.mp4" type="video/mp4" />
+            当前浏览器无法播放该视频。
+          </video>
+          <div class="pose-video-status" id="poseVideoStatus" hidden>
+            <strong>样例视频尚未生成</strong>
+            <span>请先运行完整姿态与球拍渲染任务，再刷新此页面。</span>
+          </div>
+        </div>
+        <div class="pose-timeline-note"><i></i><span>这是模型原始输出，没有人工修正；遮挡和远端小目标处可能出现抖动或短时误识别。</span></div>
+      </article>
+
+      <aside class="pose-info-card">
+        <span class="pose-card-kicker">画面标记</span>
+        <h2>视频里有什么</h2>
+        <ul>
+          <li><i class="human"></i><div><strong>人体骨架</strong><span>双方球员关节，远端球员使用裁剪放大识别。</span></div></li>
+          <li><i class="racket"></i><div><strong>球拍五点</strong><span>拍头、拍框左右、拍喉和拍柄；红圈表示拍柄。</span></div></li>
+          <li><i class="ball"></i><div><strong>网球位置</strong><span>紫色球点和轨迹来自已有球追踪结果。</span></div></li>
+          <li><i class="court"></i><div><strong>球场与小地图</strong><span>黄色落地区域、球场线和右下角回合落点地图。</span></div></li>
+        </ul>
+        <div class="pose-architecture-note">
+          <strong>为什么采用成片回放？</strong>
+          <p>关键分析层与每个视频帧一起编码，不依赖网页上方的浮动组件。网页仍可用结构化结果实现事件跳转、筛选和统计，但全屏回放以成片为准。</p>
+        </div>
+        <a class="pose-back" href="index.html#demo">返回完整分析报告 <span>→</span></a>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const video = document.querySelector('#poseReviewVideo');
+    const shell = document.querySelector('#poseVideoShell');
+    const status = document.querySelector('#poseVideoStatus');
+    document.querySelector('#poseFullscreen').addEventListener('click', async () => {
+      try {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else if (video.requestFullscreen) await video.requestFullscreen();
+        else await shell.requestFullscreen?.();
+      } catch (error) {
+        status.hidden = false;
+        status.querySelector('strong').textContent = '浏览器暂时无法进入全屏';
+        status.querySelector('span').textContent = '可以使用播放器自带的全屏按钮。';
+      }
+    });
+    video.addEventListener('error', () => { status.hidden = false; });
+    video.addEventListener('loadedmetadata', () => { status.hidden = true; });
+  </script>
+</body>
+</html>

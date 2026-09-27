@@ -10,6 +10,7 @@ import json
 import math
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -27,6 +28,7 @@ from netcast_tennisvision.cloud.ppio_lifecycle import (
 )
 from netcast_tennisvision.paths import REPOSITORY_ROOT
 from netcast_tennisvision.vision.display_correction import parse_display_correction
+from netcast_tennisvision.vision.viewpoint import classify_viewpoint
 
 ROOT = REPOSITORY_ROOT
 DATA = ROOT / "data"
@@ -43,11 +45,11 @@ CACHE = DATA / "cache"
 OUTPUTS = DATA / "outputs"
 UPLOAD_CHUNK_SIZE = 8 * 1024**2
 MAX_VIDEO_SIZE = 4 * 1024**3
-ANALYSIS_VERSION = "production-v30"
+ANALYSIS_VERSION = "production-v32"
 job_lock = threading.Lock()
 history_lock = threading.Lock()
 job_process: subprocess.Popen[bytes] | None = None
-ACTIVE_STATES = {"queued", "running", "needs_court_calibration", "report_ready"}
+ACTIVE_STATES = {"queued", "running", "needs_court_calibration", "report_ready", "stopping", "stop_failed"}
 CLOUD_API_URL = os.environ.get("TENNISVISION_CLOUD_URL", "").strip().rstrip("/")
 CLOUD_API_TOKEN = os.environ.get("TENNISVISION_CLOUD_TOKEN", "").strip()
 CLOUD_TIMEOUT_SECONDS = float(os.environ.get("TENNISVISION_CLOUD_TIMEOUT", "3600"))
@@ -83,6 +85,22 @@ def write_json_atomic(path: Path, payload: dict[str, object]) -> None:
     os.replace(temporary, path)
 
 
+def local_gpu_job() -> bool:
+    return read_json(CURRENT_JOB).get("execution_target") == "local-gpu"
+
+
+def require_local_gpu() -> str:
+    """Probe the actual Python CUDA runtime without keeping a GPU context in the relay."""
+    probe = subprocess.run(
+        [sys.executable, "-c", "import torch; assert torch.cuda.is_available(); "
+         "torch.ones(1, device='cuda'); print(torch.cuda.get_device_name(0))"],
+        capture_output=True, text=True, timeout=45,
+    )
+    if probe.returncode:
+        raise ValueError("本机 NVIDIA 显卡不可用，请检查驱动和 CUDA 版 PyTorch，或关闭本机显卡分析")
+    return probe.stdout.strip()
+
+
 def status_payload() -> dict[str, object]:
     status = read_json(STATUS) or {"state": "idle", "progress": 0, "stage": "等待视频"}
     # Pipeline progress updates replace job_status.json. Keep durable job identity in a
@@ -95,8 +113,36 @@ def status_payload() -> dict[str, object]:
         else os.environ.get("TENNISVISION_EXECUTION_TARGET", "local")
     )
     status.setdefault("execution_target", default_target)
+    status["local_gpu_selection_supported"] = True
+    if cloud_manager and not local_gpu_job() and cloud_manager.stopping:
+        status.update(state="stopping", stage="正在停止分析并释放云端算力")
     archive_completed_analysis(status)
     return status
+
+
+def stop_analysis() -> None:
+    """Serialize against uploads; do not allow replacement until the worker is gone."""
+    global job_process
+    with job_lock:
+        if cloud_manager and not local_gpu_job():
+            cloud_manager.stop()
+            return
+        write_json_atomic(STATUS, {"state": "stopping", "progress": 0, "stage": "正在停止分析"})
+        try:
+            if job_process is not None and job_process.poll() is None:
+                if os.name == "nt":
+                    subprocess.run(
+                        ["taskkill", "/PID", str(job_process.pid), "/T", "/F"],
+                        check=True, capture_output=True, timeout=15,
+                    )
+                else:
+                    os.killpg(job_process.pid, signal.SIGKILL)
+                job_process.wait(timeout=15)
+            job_process = None
+            write_json_atomic(STATUS, {"state": "cancelled", "progress": 0, "stage": "分析已停止"})
+        except (OSError, subprocess.SubprocessError):
+            write_json_atomic(STATUS, {"state": "stop_failed", "progress": 0, "stage": "停止失败，请重试"})
+            raise
 
 
 def _history_job_id(value: object) -> str | None:
@@ -639,6 +685,7 @@ class Handler(SimpleHTTPRequestHandler):
             "/api/history",
             "/api/analyze",
             "/api/court-calibration",
+            "/api/viewpoint",
             "/api/upload/init",
             "/api/upload/complete",
         } and not request_path.startswith(("/api/upload/chunk/", "/api/history/")):
@@ -705,6 +752,24 @@ class Handler(SimpleHTTPRequestHandler):
         request_path = request.path
         if not self.cloud_request_authorized():
             return
+        if request_path == "/api/speed-analysis":
+            current = status_payload()
+            report = read_json(OUTPUTS / "scene3d.json")
+            if current.get("state") != "complete" or not report or not (DATA / "clip.mp4").exists():
+                self.send_json({"error": "分析报告尚未完成"}, HTTPStatus.CONFLICT)
+                return
+            import cv2
+
+            from netcast_tennisvision.tracking.speed import analyze_exported_scene_speeds
+
+            capture = cv2.VideoCapture(str(DATA / "clip.mp4"))
+            try:
+                size = (int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                        int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+            finally:
+                capture.release()
+            self.send_json(analyze_exported_scene_speeds(report, size))
+            return
         if request_path in {"/api/live-lab/status", "/api/live-lab/frame"}:
             query = parse_qs(request.query)
             session_id = query.get("session_id", [""])[0]
@@ -755,7 +820,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return
             super().do_GET()
             return
-        if CLOUD_API_URL and (
+        if CLOUD_API_URL and not local_gpu_job() and (
             request_path.startswith("/api/") or request_path.startswith("/data/")
         ):
             self.proxy_cloud_request("GET")
@@ -790,6 +855,15 @@ class Handler(SimpleHTTPRequestHandler):
         request_path = urlparse(self.path).path
         if not self.cloud_request_authorized():
             return
+        if request_path == "/api/viewpoint":
+            try:
+                payload = self.read_bounded_json(maximum=4096)
+                self.send_json(classify_viewpoint(
+                    payload.get("corners"), payload.get("width"), payload.get("height"),
+                ))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
         if request_path == "/api/live-lab/start":
             try:
                 try:
@@ -801,13 +875,20 @@ class Handler(SimpleHTTPRequestHandler):
                 if cloud_live_manager is not None:
                     if cloud_manager is not None and cloud_manager.active:
                         raise CloudLifecycleError("普通视频分析正在运行，请完成后再启动实时实验")
+                    external = payload.get("source") == "external_rtmp"
+                    stream_name = str(payload.get("stream_name", ""))
+                    if external and (not stream_name or len(stream_name) > 128 or any(
+                        c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for c in stream_name
+                    )):
+                        raise ValueError("实时流名称无效")
                     snapshot = cloud_live_manager.start_live(
                         ROOT / "assets" / "demo" / "demo.mp4",
                         {
-                            "X-Filename": "demo.mp4",
+                            "X-Filename": "camera" if external else "demo.mp4",
                             "X-Court-Corners": json.dumps(corners),
+                            **({"X-External-Stream": stream_name, "X-Fps": str(payload.get("fps", 30))} if external else {}),
                         },
-                        replace_active=True,
+                        replace_active=not external,
                     )
                     self.send_json(snapshot, HTTPStatus.ACCEPTED)
                 else:
@@ -879,8 +960,24 @@ class Handler(SimpleHTTPRequestHandler):
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
             return
-        if CLOUD_API_URL and request_path in {"/api/analyze", "/api/court-calibration"}:
+        wants_local_gpu = self.headers.get("X-Execution-Target", "auto") == "local-gpu"
+        if CLOUD_API_URL and request_path in {"/api/analyze", "/api/court-calibration", "/api/analysis/stop"} and not (
+            wants_local_gpu if request_path == "/api/analyze" else local_gpu_job()
+        ):
+            if request_path == "/api/analyze" and local_gpu_job():
+                with job_lock:
+                    if status_payload().get("state") in ACTIVE_STATES or (job_process and job_process.poll() is None):
+                        self.send_json({"error": "本机分析尚未结束", "code": "analysis_in_progress"}, HTTPStatus.CONFLICT)
+                        return
+                    write_json_atomic(CURRENT_JOB, {"execution_target": "cloud-fixed"})
             self.proxy_cloud_request("POST")
+            return
+        if request_path == "/api/analysis/stop":
+            try:
+                stop_analysis()
+                self.send_json(status_payload(), HTTPStatus.ACCEPTED)
+            except (OSError, subprocess.SubprocessError):
+                self.send_json({"error": "停止失败，请重试"}, HTTPStatus.SERVICE_UNAVAILABLE)
             return
         if request_path == "/api/upload/init":
             self.initialize_chunked_upload()
@@ -889,7 +986,7 @@ class Handler(SimpleHTTPRequestHandler):
             self.complete_chunked_upload()
             return
         if request_path == "/api/court-calibration":
-            if cloud_manager:
+            if cloud_manager and not local_gpu_job():
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
                     if not 0 < length <= 64 * 1024:
@@ -912,7 +1009,7 @@ class Handler(SimpleHTTPRequestHandler):
             current_status = status_payload()
             process_active = job_process is not None and job_process.poll() is None
             status_active = current_status.get("state") in ACTIVE_STATES
-            if process_active or status_active:
+            if process_active or status_active or (cloud_manager and (cloud_manager.active or cloud_manager.runtime_path.exists())):
                 resumed = resumable_job(requested_fingerprint)
                 if resumed is not None:
                     self.send_json(
@@ -924,6 +1021,7 @@ class Handler(SimpleHTTPRequestHandler):
                             "fps": resumed.get("fps"),
                             "workload_factor": resumed.get("workload_factor", 1),
                             "display_correction": resumed.get("display_correction"),
+                            "execution_target": resumed.get("execution_target"),
                         },
                         HTTPStatus.ACCEPTED,
                     )
@@ -938,6 +1036,15 @@ class Handler(SimpleHTTPRequestHandler):
                     HTTPStatus.CONFLICT,
                 )
                 return
+            if self.headers.get("X-Execution-Target", "auto") not in {"auto", "local-gpu"}:
+                self.send_json({"error": "不支持的分析设备"}, HTTPStatus.BAD_REQUEST)
+                return
+            if wants_local_gpu:
+                try:
+                    require_local_gpu()
+                except (ValueError, OSError, subprocess.SubprocessError) as exc:
+                    self.send_json({"error": str(exc), "code": "local_gpu_unavailable"}, HTTPStatus.UNPROCESSABLE_ENTITY)
+                    return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
@@ -1013,6 +1120,9 @@ class Handler(SimpleHTTPRequestHandler):
                 "workload_factor": workload_factor,
                 "display_correction": display_correction,
                 "started_at": int(time.time()),
+                "execution_target": "local-gpu" if wants_local_gpu else (
+                    "cloud-on-demand" if cloud_manager else os.environ.get("TENNISVISION_EXECUTION_TARGET", "local")
+                ),
             }
             # Publish a self-contained queued snapshot first. Until CURRENT_JOB is replaced,
             # readers still see the new identity because status fields win during merging.
@@ -1026,7 +1136,7 @@ class Handler(SimpleHTTPRequestHandler):
                 },
             )
             write_json_atomic(CURRENT_JOB, job_metadata)
-            if cloud_manager:
+            if cloud_manager and not wants_local_gpu:
                 try:
                     cloud_manager.start(
                         clip,
@@ -1070,17 +1180,28 @@ class Handler(SimpleHTTPRequestHandler):
                 )
                 return
             environment = os.environ.copy()
+            if wants_local_gpu:
+                environment["TENNISVISION_REQUIRE_LOCAL_CUDA"] = "1"
+                environment["TENNISVISION_EXECUTION_TARGET"] = "local-gpu"
+                environment["TENNISVISION_OUTPUT_MODE"] = "event-overlay"
             ffmpeg_dir = ffmpeg_directory()
             if ffmpeg_dir:
                 environment["PATH"] = str(ffmpeg_dir) + os.pathsep + environment.get("PATH", "")
-            log_handle = LOG.open("wb")
-            job_process = subprocess.Popen(
-                [sys.executable, "-m", "netcast_tennisvision.pipeline.runner"],
-                cwd=ROOT,
-                env=environment,
-                stdout=log_handle,
-                stderr=subprocess.STDOUT,
-            )
+            try:
+                with LOG.open("wb") as log_handle:
+                    job_process = subprocess.Popen(
+                        [sys.executable, "-m", "netcast_tennisvision.pipeline.runner"],
+                        cwd=ROOT,
+                        env=environment,
+                        stdout=log_handle,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=os.name != "nt",
+                    )
+            except OSError as exc:
+                write_json_atomic(STATUS, {"state": "error", "progress": 0,
+                                          "stage": "本机分析未启动", "error": str(exc)})
+                self.send_json({"error": "本机分析进程启动失败，请检查服务日志"}, HTTPStatus.SERVICE_UNAVAILABLE)
+                return
             job_metadata["pid"] = job_process.pid
             write_json_atomic(CURRENT_JOB, job_metadata)
             self.send_json(
@@ -1094,6 +1215,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "workload_factor": workload_factor,
                     "video_fingerprint": fingerprint,
                     "display_correction": display_correction,
+                    "execution_target": job_metadata["execution_target"],
                 },
                 HTTPStatus.ACCEPTED,
             )
